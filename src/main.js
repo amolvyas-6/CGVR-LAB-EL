@@ -22,6 +22,7 @@ import { estimatePropellant } from './physics/propellant.js';
 import { createPlannerScene } from './scene/plannerScene.js';
 import { createPerformanceMonitor } from './utils/perf.js';
 import { createVREntry } from './xr/entry.js';
+import { initNavigationTabs } from './app/tabs.js';
 
 const PLAYBACK_DURATION_MS = 20_000;
 const PHYSICS_UPDATE_INTERVAL_MS = 1000 / 30;
@@ -983,6 +984,7 @@ function teardown() {
     plannerToDestroy?.destroy();
   }
   planner = null;
+  destroyTabs?.();
   view.destroy();
   if (debugFunction && window.__plannerXRDiagnostics === debugFunction) {
     delete window.__plannerXRDiagnostics;
@@ -993,4 +995,5 @@ window.addEventListener('beforeunload', teardown, { once: true });
 if (import.meta.hot) import.meta.hot.dispose(teardown);
 
 // Preserve the established desktop startup workflow; users may recompute after edits.
+const destroyTabs = initNavigationTabs();
 void computeGrid(DEFAULT_MISSION_INPUTS);

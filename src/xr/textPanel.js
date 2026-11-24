@@ -17,10 +17,10 @@ export function createTextPanel({
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.generateMipmaps = true;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
-  texture.anisotropy = 4;
+  texture.anisotropy = 16;
 
   const material = new THREE.MeshBasicMaterial({
     map: texture,

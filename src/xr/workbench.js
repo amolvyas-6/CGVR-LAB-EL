@@ -24,17 +24,17 @@ import {
 } from './textPanel.js';
 
 const PALETTE = Object.freeze({
-  space: '#101b2a',
-  panel: '#172638',
-  surface: '#22354a',
-  ink: '#f0f5fb',
-  secondary: '#b1c4d8',
-  accent: '#8be2db',
-  hover: '#355467',
-  border: '#496178',
-  disabled: '#192638',
-  error: '#ffac9c',
-  success: '#9fe1b8',
+  space: '#080c14',
+  panel: '#0d1526',
+  surface: '#16223a',
+  ink: '#ffffff',
+  secondary: '#94a3b8',
+  accent: '#38bdf8',
+  hover: '#1e3456',
+  border: '#2a4365',
+  disabled: '#111927',
+  error: '#f87171',
+  success: '#34d399',
 });
 
 function drawPanel(context, width, height, color = PALETTE.panel) {

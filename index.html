@@ -7,285 +7,450 @@
       name="description"
       content="A WebXR-first engineering workbench for Earth-origin interplanetary transfers."
     />
-    <meta name="theme-color" content="#f5f7fa" />
+    <meta name="theme-color" content="#070a11" />
     <title>Interplanetary Transfer Planner · CGVR Lab</title>
   </head>
   <body>
-    <div class="app-shell">
-      <header class="app-header">
-        <div class="header-row">
-          <div>
-            <h1>Interplanetary transfer planner</h1>
-            <p class="header-summary">VR-first mission workbench · Earth-origin patched-conic transfers</p>
-          </div>
-          <div class="header-actions">
-            <p class="compute-status" id="compute-status" role="status" aria-live="polite">Preparing mission planner…</p>
+    <div class="workspace-layout">
+      <!-- Left Navigation Panel -->
+      <aside class="nav-sidebar" aria-label="Mission Navigation">
+        <div class="sidebar-brand">
+          <div class="header-badge">CGVR LAB · WEBXR</div>
+          <h1>Interplanetary Planner</h1>
+          <p class="sidebar-subtitle">Earth-origin patched-conic Lambert trajectory workbench</p>
+        </div>
+
+        <nav class="nav-menu" role="tablist" aria-label="Workspace Sections">
+          <button
+            type="button"
+            class="nav-item is-active"
+            role="tab"
+            aria-selected="true"
+            data-tab-target="workbench"
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
+            <span class="nav-text">
+              <span class="nav-title">Mission &amp; 3D View</span>
+              <span class="nav-desc">Orrery, porkchop &amp; search</span>
+            </span>
+          </button>
+
+          <button
+            type="button"
+            class="nav-item"
+            role="tab"
+            aria-selected="false"
+            data-tab-target="analytics"
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"></path><path d="m19 9-5 5-4-4-3 3"></path></svg>
+            <span class="nav-text">
+              <span class="nav-title">Trajectory &amp; Fuel</span>
+              <span class="nav-desc">Minima, Δv &amp; propellant</span>
+            </span>
+          </button>
+
+          <button
+            type="button"
+            class="nav-item"
+            role="tab"
+            aria-selected="false"
+            data-tab-target="diagnostics"
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+            <span class="nav-text">
+              <span class="nav-title">Diagnostics &amp; Model</span>
+              <span class="nav-desc">Telemetry &amp; assumptions</span>
+            </span>
+          </button>
+        </nav>
+
+        <div class="sidebar-status-box">
+          <div class="sidebar-status-label">Solver Status</div>
+          <span class="compute-status" id="compute-status" role="status" aria-live="polite">Initializing mission planner…</span>
+
+          <div class="sidebar-vr-block">
             <div id="vr-entry" class="vr-entry">
               <button class="vr-entry-button" id="vr-entry-button" type="button" disabled>Checking VR support…</button>
             </div>
+            <p class="vr-status" id="vr-status" role="status" aria-live="polite">Detecting immersive WebXR runtime…</p>
           </div>
         </div>
-        <p class="vr-status" id="vr-status" role="status" aria-live="polite">Checking for an immersive VR runtime…</p>
-      </header>
+      </aside>
 
-      <main>
-        <section class="mission-section" aria-labelledby="mission-heading">
-          <div class="section-heading">
-            <div>
-              <h2 id="mission-heading">Plan a transfer</h2>
-              <p class="section-context">Choose a destination from Earth and compute a map of possible transfers.</p>
-            </div>
-          </div>
-
-          <div class="mission-layout">
-            <form id="mission-form" class="mission-form" novalidate>
-              <div class="mission-primary">
-                <div class="field">
-                  <label for="target">Destination</label>
-                  <select id="target" name="target">
-                    <option value="Venus">Venus</option>
-                    <option value="Mars" selected>Mars</option>
-                    <option value="Jupiter">Jupiter</option>
-                  </select>
-                </div>
-                <button class="primary-button" id="compute-grid" type="submit">Compute grid</button>
-              </div>
-              <p class="form-note" id="grid-summary">Preparing the default Mars grid…</p>
-              <p class="form-error" id="form-errors" role="alert" hidden></p>
-
-              <details class="search-options">
-                <summary>Search settings</summary>
-                <p class="control-help">Change the dates, flight duration, or sample count, then compute a new grid.</p>
-                <div class="form-grid">
-                  <div class="field">
-                    <label for="departure-start">First departure (UTC)</label>
-                    <input id="departure-start" name="departureStart" type="date" required value="2026-07-01" />
-                  </div>
-                  <div class="field">
-                    <label for="departure-end">Last departure (UTC)</label>
-                    <input id="departure-end" name="departureEnd" type="date" required value="2027-03-01" />
-                  </div>
-                  <div class="field">
-                    <label for="tof-min">Shortest flight (days)</label>
-                    <input id="tof-min" name="tofMinDays" type="number" min="0.001" step="any" required value="100" />
-                  </div>
-                  <div class="field">
-                    <label for="tof-max">Longest flight (days)</label>
-                    <input id="tof-max" name="tofMaxDays" type="number" min="0.001" step="any" required value="400" />
-                  </div>
-                  <div class="field">
-                    <label for="resolution">Samples per axis</label>
-                    <input id="resolution" name="resolution" type="number" min="2" max="120" step="1" required value="60" />
-                    <span class="field-help">More samples make a finer map. Range 2–120.</span>
-                  </div>
-                </div>
-              </details>
-            </form>
-
-            <section class="budget-panel" aria-labelledby="budget-heading">
-              <h3 id="budget-heading">Budget filter</h3>
-              <p class="control-help">Set a limit to dim transfers that exceed it.</p>
-              <div class="field">
-                <label for="budget-type">Budget type</label>
-                <select id="budget-type" name="budgetType">
-                  <option value="none">No budget</option>
-                  <option value="cost">Transfer-cost proxy</option>
-                  <option value="c3">Departure C3</option>
-                </select>
-              </div>
-              <div class="field budget-limit-field" id="budget-limit-field" hidden>
-                <label for="budget-limit">Budget limit</label>
-                <div class="unit-input">
-                  <input id="budget-limit" name="budgetLimit" type="number" min="0" step="any" value="0" disabled />
-                  <span id="budget-unit">No unit</span>
+      <!-- Main Workspace Area -->
+      <div class="workspace-content">
+        <main>
+          <!-- TAB 1: Mission Workbench & 3D View -->
+          <div class="tab-panel" data-tab-panel="workbench">
+            <section class="mission-section" aria-labelledby="mission-heading">
+              <div class="section-heading">
+                <div>
+                  <div class="section-badge">CONFIGURATION</div>
+                  <h2 id="mission-heading">Mission Parameters &amp; Constraints</h2>
+                  <p class="section-context">Select target destination and flight duration bounds to calculate trajectory solutions.</p>
                 </div>
               </div>
-              <p class="budget-error" id="budget-error" role="status" aria-live="polite"></p>
+
+              <div class="mission-layout">
+                <!-- Left: Destination & Search Range -->
+                <form id="mission-form" class="mission-form" novalidate>
+                  <div class="mission-primary">
+                    <div class="field target-field">
+                      <label for="target">Target Destination</label>
+                      <select id="target" name="target">
+                        <option value="Venus">Venus (0.72 AU)</option>
+                        <option value="Mars" selected>Mars (1.52 AU)</option>
+                        <option value="Jupiter">Jupiter (5.20 AU)</option>
+                      </select>
+                    </div>
+                    <button class="primary-button" id="compute-grid" type="submit">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                      Calculate Trajectories
+                    </button>
+                  </div>
+
+                  <div class="grid-status-bar">
+                    <span class="status-indicator-dot"></span>
+                    <p class="form-note" id="grid-summary">Preparing default Mars trajectory grid…</p>
+                  </div>
+                  <p class="form-error" id="form-errors" role="alert" hidden></p>
+
+                  <details class="search-options">
+                    <summary>
+                      <svg class="details-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                      Trajectory Search Window
+                    </summary>
+                    <p class="control-help">Adjust departure date window, time-of-flight (TOF) bounds, and porkchop grid resolution.</p>
+                    <div class="form-grid">
+                      <div class="field">
+                        <label for="departure-start">Earliest Departure (UTC)</label>
+                        <input id="departure-start" name="departureStart" type="date" required value="2026-07-01" />
+                      </div>
+                      <div class="field">
+                        <label for="departure-end">Latest Departure (UTC)</label>
+                        <input id="departure-end" name="departureEnd" type="date" required value="2027-03-01" />
+                      </div>
+                      <div class="field">
+                        <label for="tof-min">Min Flight Duration (Days)</label>
+                        <input id="tof-min" name="tofMinDays" type="number" min="0.001" step="any" required value="100" />
+                      </div>
+                      <div class="field">
+                        <label for="tof-max">Max Flight Duration (Days)</label>
+                        <input id="tof-max" name="tofMaxDays" type="number" min="0.001" step="any" required value="400" />
+                      </div>
+                      <div class="field span-two">
+                        <label for="resolution">Grid Resolution (Samples / Axis)</label>
+                        <input id="resolution" name="resolution" type="number" min="2" max="120" step="1" required value="60" />
+                        <span class="field-help">Higher sample counts yield finer delta-v maps. Allowed range: 2–120.</span>
+                      </div>
+                    </div>
+                  </details>
+                </form>
+
+                <!-- Right: Delta-V & Energy Constraints -->
+                <section class="budget-panel" aria-labelledby="budget-heading">
+                  <div class="panel-header-inline">
+                    <h3 id="budget-heading">Delta-V &amp; Energy Filter</h3>
+                  </div>
+                  <p class="control-help">Filter out trajectories exceeding mission delta-v or launch energy thresholds.</p>
+                  <div class="field">
+                    <label for="budget-type">Constraint Metric</label>
+                    <select id="budget-type" name="budgetType">
+                      <option value="none">No Budget Limit (Unconstrained)</option>
+                      <option value="cost">Transfer Cost Proxy (v∞,dep + v∞,arr)</option>
+                      <option value="c3">Departure Energy (C3)</option>
+                    </select>
+                  </div>
+                  <div class="field budget-limit-field" id="budget-limit-field" hidden>
+                    <label for="budget-limit">Threshold Limit</label>
+                    <div class="unit-input">
+                      <input id="budget-limit" name="budgetLimit" type="number" min="0" step="any" value="0" disabled />
+                      <span id="budget-unit">km/s</span>
+                    </div>
+                  </div>
+                  <p class="budget-error" id="budget-error" role="status" aria-live="polite"></p>
+
+                  <div class="budget-quick-guide">
+                    <div class="guide-item">
+                      <span class="guide-label">Unconstrained:</span>
+                      <span class="guide-desc">Evaluates all computed transfer opportunities.</span>
+                    </div>
+                    <div class="guide-item">
+                      <span class="guide-label">Cost Proxy:</span>
+                      <span class="guide-desc">Filters by combined excess speed (v∞,dep + v∞,arr).</span>
+                    </div>
+                    <div class="guide-item">
+                      <span class="guide-label">Departure C3:</span>
+                      <span class="guide-desc">Filters by launch vehicle energy capacity (v∞,dep² in km²/s²).</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
             </section>
-          </div>
-        </section>
 
-        <section class="visual-section" aria-labelledby="visual-heading">
-          <div class="section-heading visual-heading">
-            <div>
-              <h2 id="visual-heading">Mission geometry and transfer cost</h2>
-              <p class="section-context">Pick a cell on the cost map, then play or scrub the transfer.</p>
-            </div>
-            <div id="display-settings" class="display-settings" aria-label="Display settings"></div>
-          </div>
-
-          <div class="graphics-surface" id="graphics-surface">
-            <section class="orrery-panel" aria-labelledby="orrery-heading">
-              <div class="viewport-heading">
-                <h3 id="orrery-heading">Ephemeris orrery</h3>
-                <span id="body-scale-note">Planet radii exaggerated for visibility</span>
-              </div>
-              <div
-                class="orrery-viewport"
-                id="orrery-viewport"
-                tabindex="0"
-                role="img"
-                aria-label="Ephemeris orrery. Use arrow keys to rotate, plus or minus to zoom, and Home to reset."
-              ></div>
-              <p class="viewport-note" id="asset-status" aria-live="polite">Loading body imagery; ephemeris calculations are independent.</p>
-            </section>
-
-            <section class="plot-panel" aria-labelledby="plot-heading">
-              <div class="viewport-heading">
-                <h3 id="plot-heading">Transfer cost map</h3>
-                <span>Transfer-cost proxy · km/s</span>
-              </div>
-              <div class="plot-axis-layout">
-                <div class="plot-y-axis" aria-hidden="true">
-                  <span id="plot-tof-max">—</span>
-                  <span class="axis-y-title">Time of flight (days)</span>
-                  <span id="plot-tof-min">—</span>
+            <!-- 3D Visualization: Orrery & Porkchop Plot -->
+            <section class="visual-section" aria-labelledby="visual-heading">
+              <div class="section-heading visual-heading">
+                <div>
+                  <div class="section-badge">VISUALIZATION</div>
+                  <h2 id="visual-heading">Orbital Geometry &amp; Porkchop Cost Map</h2>
+                  <p class="section-context">Select any cell on the cost map to simulate the transfer arc and analyze mission geometry.</p>
                 </div>
-                <div class="plot-draw-column">
+                <div id="display-settings" class="display-settings" aria-label="Display settings"></div>
+              </div>
+
+              <div class="graphics-surface" id="graphics-surface">
+                <!-- Left 3D Panel: Ephemeris Orrery -->
+                <section class="orrery-panel" aria-labelledby="orrery-heading">
+                  <div class="viewport-heading">
+                    <div class="viewport-title-group">
+                      <h3 id="orrery-heading">Ephemeris Orrery</h3>
+                      <span class="tag-live">3D Real-Time</span>
+                    </div>
+                    <span id="body-scale-note" class="viewport-scale-note">Planet radii exaggerated for visibility</span>
+                  </div>
                   <div
-                    class="plot-viewport"
-                    id="plot-viewport"
+                    class="orrery-viewport"
+                    id="orrery-viewport"
                     tabindex="0"
-                    role="group"
-                    aria-label="Porkchop plot. Use arrow keys to move the hover cell and Enter to select it."
+                    role="img"
+                    aria-label="Ephemeris orrery. Use arrow keys to rotate, plus or minus to zoom, and Home to reset."
                   ></div>
-                  <div class="plot-x-axis" aria-hidden="true">
-                    <span id="plot-departure-start">—</span>
-                    <span class="axis-x-title">Departure date (UTC)</span>
-                    <span id="plot-departure-end">—</span>
+                  <p class="viewport-note" id="asset-status" aria-live="polite">Loading planetary textures…</p>
+                </section>
+
+                <!-- Right 3D Panel: Porkchop Cost Map -->
+                <section class="plot-panel" aria-labelledby="plot-heading">
+                  <div class="viewport-heading">
+                    <div class="viewport-title-group">
+                      <h3 id="plot-heading">Porkchop Cost Map</h3>
+                      <span class="tag-unit">v∞,dep + v∞,arr (km/s)</span>
+                    </div>
+                    <span class="viewport-note-inline">Lambert Solutions</span>
                   </div>
+                  <div class="plot-axis-layout">
+                    <div class="plot-y-axis" aria-hidden="true">
+                      <span id="plot-tof-max">—</span>
+                      <span class="axis-y-title">Flight Duration (Days)</span>
+                      <span id="plot-tof-min">—</span>
+                    </div>
+                    <div class="plot-draw-column">
+                      <div
+                        class="plot-viewport"
+                        id="plot-viewport"
+                        tabindex="0"
+                        role="group"
+                        aria-label="Porkchop plot. Use arrow keys to move the hover cell and Enter to select it."
+                      ></div>
+                      <div class="plot-x-axis" aria-hidden="true">
+                        <span id="plot-departure-start">—</span>
+                        <span class="axis-x-title">Departure Date (UTC)</span>
+                        <span id="plot-departure-end">—</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="plot-legend" aria-label="Transfer-cost proxy color scale">
+                    <div class="legend-gradient" aria-hidden="true"></div>
+                    <div class="legend-values"><span id="legend-min">—</span><span id="legend-max">—</span></div>
+                    <p id="legend-note">Metric: Characteristic excess velocity v∞,dep + v∞,arr (km/s).</p>
+                  </div>
+                  <p class="hover-summary" id="hover-summary" aria-live="off">Hover or click a plot cell to inspect launch date and delta-v coordinates.</p>
+                </section>
+
+                <div class="renderer-unavailable" id="renderer-unavailable" role="status" hidden>
+                  <strong>3D Visualization Unavailable</strong>
+                  <span>This browser could not start WebGL2. Numerical mission computation and data remain active.</span>
                 </div>
               </div>
-              <div class="plot-legend" aria-label="Transfer-cost proxy color scale">
-                <div class="legend-gradient" aria-hidden="true"></div>
-                <div class="legend-values"><span id="legend-min">—</span><span id="legend-max">—</span></div>
-                <p id="legend-note">Cost proxy uses v∞,dep + v∞,arr; units are km/s.</p>
-              </div>
-              <p class="hover-summary" id="hover-summary" aria-live="off">Hover or focus a plot cell to inspect its grid coordinates.</p>
-            </section>
 
-            <div class="renderer-unavailable" id="renderer-unavailable" role="status" hidden>
-              <strong>3D visualization unavailable</strong>
-              <span>This browser could not start the WebGL2 planner. Mission computation and numerical results remain available.</span>
-            </div>
-          </div>
-
-          <div class="interaction-row">
-            <div class="time-controls">
-              <label for="time-progress">Mission time <span id="mission-date">—</span></label>
-              <input id="time-progress" type="range" min="0" max="100" step="0.1" value="0" aria-label="Mission time from departure to arrival" />
-              <div class="time-control-actions">
-                <button class="secondary-button" id="play-toggle" type="button" disabled>Play</button>
-                <button class="secondary-button" id="reset-view" type="button">Reset view</button>
-              </div>
-            </div>
-            <div class="snap-panel">
-              <button class="secondary-button" id="snap-optimum" type="button" disabled>Best transfer</button>
-              <p>Selects the lowest-cost cell that meets your budget.</p>
-            </div>
-          </div>
-        </section>
-
-        <section class="results-section" aria-labelledby="results-heading">
-          <div class="section-heading results-heading">
-            <div>
-              <h2 id="results-heading">Computed results</h2>
-              <p class="section-context">Values come from the current grid and selected cell.</p>
-            </div>
-            <span class="computed-target">Computed target: <strong id="selected-target">Not computed</strong></span>
-          </div>
-
-          <div class="minima-grid">
-            <section class="minimum-panel" aria-labelledby="unconstrained-heading">
-              <h3 id="unconstrained-heading">Unconstrained discrete grid minimum</h3>
-              <dl class="minimum-values">
-                <div><dt>Departure / TOF / arrival</dt><dd id="unconstrained-minimum">Not computed</dd></div>
-                <div><dt>Transfer-cost proxy</dt><dd id="unconstrained-cost">—</dd></div>
-                <div><dt>Departure C3</dt><dd id="unconstrained-c3">—</dd></div>
-              </dl>
-            </section>
-            <section class="minimum-panel" aria-labelledby="feasible-heading">
-              <h3 id="feasible-heading">Budget-feasible discrete minimum</h3>
-              <p id="feasible-minimum" class="feasible-status" role="status" aria-live="polite">No grid computed</p>
-              <dl class="minimum-values">
-                <div><dt>Departure / TOF / arrival</dt><dd id="feasible-dates">—</dd></div>
-                <div><dt>Transfer-cost proxy</dt><dd id="feasible-cost">—</dd></div>
-                <div><dt>Departure C3</dt><dd id="feasible-c3">—</dd></div>
-              </dl>
-            </section>
-          </div>
-
-          <section class="selected-panel" aria-labelledby="selected-heading">
-            <div class="selected-heading-row">
-              <h3 id="selected-heading">Selected transfer</h3>
-              <p class="selection-status" id="selection-status">Select a valid plot cell.</p>
-            </div>
-            <dl class="selected-values">
-              <div><dt>Departure (UTC)</dt><dd id="selected-departure">—</dd></div>
-              <div><dt>Arrival (UTC)</dt><dd id="selected-arrival">—</dd></div>
-              <div><dt>Time of flight</dt><dd id="selected-tof">—</dd></div>
-              <div><dt>Transfer-cost proxy</dt><dd id="selected-cost">—</dd></div>
-              <div><dt>Departure C3</dt><dd id="selected-c3">—</dd></div>
-              <div><dt>Departure v∞</dt><dd id="selected-vinf-departure">—</dd></div>
-              <div><dt>Arrival v∞</dt><dd id="selected-vinf-arrival">—</dd></div>
-              <div><dt>Transfer branch</dt><dd id="selected-branch">—</dd></div>
-              <div><dt>Budget feasibility</dt><dd id="selected-feasibility">—</dd></div>
-            </dl>
-            <section class="propellant-panel" aria-labelledby="propellant-heading">
-              <h4 id="propellant-heading">Propellant estimate</h4>
-              <dl class="selected-values">
-                <div><dt>Estimated propellant</dt><dd id="propellant-mass">—</dd></div>
-                <div><dt>Estimated propellant cost (USD)</dt><dd id="propellant-cost">—</dd></div>
-                <div><dt>Total speed change (Δv)</dt><dd id="propellant-total-dv">—</dd></div>
-                <div><dt>Earth departure burn</dt><dd id="propellant-departure-dv">—</dd></div>
-                <div><dt>Destination capture burn</dt><dd id="propellant-capture-dv">—</dd></div>
-              </dl>
-              <p class="selection-status" id="propellant-orbits"></p>
-              <p class="selection-status" id="propellant-status" role="status" aria-live="polite"></p>
-              <details class="search-options" id="propellant-settings">
-                <summary>Propellant settings</summary>
-                <p class="control-help">The dry mass includes the spacecraft and payload after both burns. Use an assumed price per kilogram for the propellant bill.</p>
-                <div class="form-grid">
-                  <div class="field">
-                    <label for="dry-mass-kg">Dry mass (kg)</label>
-                    <input id="dry-mass-kg" name="dryMassKg" type="number" min="0" step="any" />
+              <!-- Mission Simulation & Playback Toolbar -->
+              <div class="interaction-row">
+                <div class="time-controls">
+                  <div class="time-label-row">
+                    <label for="time-progress">Mission Flight Progress</label>
+                    <span id="mission-date" class="mission-date-badge">—</span>
                   </div>
-                  <div class="field">
-                    <label for="specific-impulse-seconds">Engine specific impulse (s)</label>
-                    <input id="specific-impulse-seconds" name="specificImpulseSeconds" type="number" min="0" step="any" />
+                  <div class="slider-container">
+                    <input id="time-progress" type="range" min="0" max="100" step="0.1" value="0" aria-label="Mission time from departure to arrival" />
                   </div>
-                  <div class="field">
-                    <label for="price-per-kg-usd">Assumed propellant price (USD/kg)</label>
-                    <input id="price-per-kg-usd" name="pricePerKgUsd" type="number" min="0" step="any" />
-                    <span class="field-help">Leave blank to show mass only.</span>
+                  <div class="time-control-actions">
+                    <button class="secondary-button" id="play-toggle" type="button" disabled>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                      Play
+                    </button>
+                    <button class="secondary-button" id="reset-view" type="button">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>
+                      Reset Camera
+                    </button>
                   </div>
                 </div>
-              </details>
+                <div class="snap-panel">
+                  <button class="secondary-button snap-btn" id="snap-optimum" type="button" disabled>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg>
+                    Select Optimal Transfer
+                  </button>
+                  <p class="snap-tip">Snaps to the lowest-cost transfer meeting active constraints.</p>
+                </div>
+              </div>
             </section>
-          </section>
-        </section>
-
-        <section class="telemetry-section" aria-labelledby="telemetry-heading">
-          <div class="compact-section-heading">
-            <h2 id="telemetry-heading">Rendering measurements</h2>
-            <p class="section-context">Mode-aware browser callback and renderer measurements.</p>
           </div>
-          <div class="telemetry-content" id="performance-telemetry">
-            <p class="telemetry-pending">Measurements begin when WebGL2 is available.</p>
+
+          <!-- TAB 2: Trajectory Analysis & Fuel -->
+          <div class="tab-panel" data-tab-panel="analytics" hidden>
+            <section class="results-section" aria-labelledby="results-heading">
+              <div class="section-heading results-heading">
+                <div>
+                  <div class="section-badge">ANALYTICS</div>
+                  <h2 id="results-heading">Trajectory Analysis &amp; Minima</h2>
+                  <p class="section-context">Numerical orbital transfer solutions and spacecraft performance metrics.</p>
+                </div>
+                <div class="computed-target-badge">
+                  <span>Active Target:</span> <strong id="selected-target">Not computed</strong>
+                </div>
+              </div>
+
+              <!-- Top row: Minima Cards -->
+              <div class="minima-grid">
+                <section class="minimum-panel" aria-labelledby="unconstrained-heading">
+                  <div class="min-panel-header">
+                    <span class="dot-indicator blue"></span>
+                    <h3 id="unconstrained-heading">Global Optimum (Unconstrained)</h3>
+                  </div>
+                  <dl class="minimum-values">
+                    <div><dt>Departure • TOF • Arrival</dt><dd id="unconstrained-minimum">Not computed</dd></div>
+                    <div><dt>Transfer Cost Proxy</dt><dd id="unconstrained-cost">—</dd></div>
+                    <div><dt>Departure Energy (C3)</dt><dd id="unconstrained-c3">—</dd></div>
+                  </dl>
+                </section>
+                <section class="minimum-panel" aria-labelledby="feasible-heading">
+                  <div class="min-panel-header">
+                    <span class="dot-indicator green"></span>
+                    <h3 id="feasible-heading">Budget-Feasible Minimum</h3>
+                  </div>
+                  <p id="feasible-minimum" class="feasible-status" role="status" aria-live="polite">No grid computed</p>
+                  <dl class="minimum-values">
+                    <div><dt>Departure • TOF • Arrival</dt><dd id="feasible-dates">—</dd></div>
+                    <div><dt>Transfer Cost Proxy</dt><dd id="feasible-cost">—</dd></div>
+                    <div><dt>Departure Energy (C3)</dt><dd id="feasible-c3">—</dd></div>
+                  </dl>
+                </section>
+              </div>
+
+              <!-- Active Selection Details -->
+              <section class="selected-panel" aria-labelledby="selected-heading">
+                <div class="selected-heading-row">
+                  <div class="selected-title-group">
+                    <h3 id="selected-heading">Active Trajectory Profile</h3>
+                    <span class="selection-status" id="selection-status">Select a valid cell on the porkchop plot.</span>
+                  </div>
+                </div>
+                <dl class="selected-values">
+                  <div><dt>Departure Date</dt><dd id="selected-departure">—</dd></div>
+                  <div><dt>Arrival Date</dt><dd id="selected-arrival">—</dd></div>
+                  <div><dt>Flight Duration (TOF)</dt><dd id="selected-tof">—</dd></div>
+                  <div><dt>Transfer Cost Proxy</dt><dd id="selected-cost">—</dd></div>
+                  <div><dt>Departure Energy (C3)</dt><dd id="selected-c3">—</dd></div>
+                  <div><dt>Departure Excess (v∞,dep)</dt><dd id="selected-vinf-departure">—</dd></div>
+                  <div><dt>Arrival Excess (v∞,arr)</dt><dd id="selected-vinf-arrival">—</dd></div>
+                  <div><dt>Trajectory Arc Type</dt><dd id="selected-branch">—</dd></div>
+                  <div><dt>Feasibility Status</dt><dd id="selected-feasibility">—</dd></div>
+                </dl>
+
+                <!-- Propellant & Propulsion Estimator -->
+                <section class="propellant-panel" aria-labelledby="propellant-heading">
+                  <div class="propellant-header">
+                    <h4 id="propellant-heading">Spacecraft Propulsion &amp; Fuel Estimator</h4>
+                    <p class="selection-status" id="propellant-orbits"></p>
+                  </div>
+                  <dl class="selected-values propellant-metrics">
+                    <div><dt>Required Propellant Mass</dt><dd id="propellant-mass">—</dd></div>
+                    <div><dt>Estimated Propellant Cost</dt><dd id="propellant-cost">—</dd></div>
+                    <div><dt>Total Mission Velocity Change (Δv)</dt><dd id="propellant-total-dv">—</dd></div>
+                    <div><dt>Earth Departure Burn (Δv₁)</dt><dd id="propellant-departure-dv">—</dd></div>
+                    <div><dt>Destination Capture Burn (Δv₂)</dt><dd id="propellant-capture-dv">—</dd></div>
+                  </dl>
+                  <p class="selection-status" id="propellant-status" role="status" aria-live="polite"></p>
+
+                  <details class="search-options" id="propellant-settings" open>
+                    <summary>
+                      <svg class="details-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                      Vehicle &amp; Propulsion Parameters
+                    </summary>
+                    <p class="control-help">Dry mass includes bus and payload. Specify engine specific impulse and assumed fuel pricing.</p>
+                    <div class="form-grid">
+                      <div class="field">
+                        <label for="dry-mass-kg">Dry Mass (kg)</label>
+                        <input id="dry-mass-kg" name="dryMassKg" type="number" min="0" step="any" />
+                      </div>
+                      <div class="field">
+                        <label for="specific-impulse-seconds">Engine Specific Impulse (Isp, s)</label>
+                        <input id="specific-impulse-seconds" name="specificImpulseSeconds" type="number" min="0" step="any" />
+                      </div>
+                      <div class="field span-two">
+                        <label for="price-per-kg-usd">Propellant Unit Price (USD / kg)</label>
+                        <input id="price-per-kg-usd" name="pricePerKgUsd" type="number" min="0" step="any" />
+                        <span class="field-help">Leave blank to show mass requirements only.</span>
+                      </div>
+                    </div>
+                  </details>
+                </section>
+              </section>
+            </section>
           </div>
-          <p class="telemetry-disclaimer">Callback timing is not GPU time. Desktop counts cover both scissored views; XR counts come from the renderer callback and are not a hardware headset benchmark.</p>
-        </section>
 
-        <section class="assumptions-section" aria-labelledby="assumptions-heading">
-          <h2 id="assumptions-heading">Model assumptions</h2>
-          <p>Patched-conic, Sun-only two-body transfer; impulsive departure/arrival; zero-revolution (single-pass) Lambert; no perturbations or planetary gravity wells during flight. The chart ranks v∞,dep + v∞,arr. The selected transfer also shows an ideal propellant estimate for departure from Earth orbit and capture into destination orbit. Plot cells are discrete samples.</p>
-        </section>
-      </main>
+          <!-- TAB 3: Diagnostics & Model -->
+          <div class="tab-panel" data-tab-panel="diagnostics" hidden>
+            <section class="telemetry-section" aria-labelledby="telemetry-heading">
+              <div class="section-heading">
+                <div>
+                  <div class="section-badge">SYSTEM DIAGNOSTICS</div>
+                  <h2 id="telemetry-heading">Rendering &amp; Performance Telemetry</h2>
+                  <p class="section-context">Real-time hardware frame rates, CPU callback timings, and WebGL2 pipeline metrics.</p>
+                </div>
+              </div>
+              <div class="telemetry-content" id="performance-telemetry">
+                <p class="telemetry-pending">Telemetry will initialize once WebGL2 is active.</p>
+              </div>
+              <p class="telemetry-disclaimer">Measurements represent CPU-side render loop duration and WebGL2 draw commands. Desktop figures cover both scissored viewports; WebXR figures reflect headset/emulator callbacks.</p>
+            </section>
 
-      <footer class="app-footer">
-        <span>VR-first · desktop fallback</span>
-        <span>Use an immersive WebXR browser for the in-world mission workbench.</span>
-      </footer>
+            <section class="assumptions-section" aria-labelledby="assumptions-heading">
+              <div class="section-heading">
+                <div>
+                  <div class="section-badge">THEORY &amp; SCOPE</div>
+                  <h2 id="assumptions-heading">Orbital Mechanics Model Assumptions</h2>
+                  <p class="section-context">Physical simplifications and numerical methods used for trajectory computation.</p>
+                </div>
+              </div>
+              <div class="assumptions-grid">
+                <div class="assumption-item">
+                  <strong>Patched-Conic Approximation</strong>
+                  <p>Heliocentric two-body transfer ignoring intermediate three-body gravitational perturbations and planetary gravity wells during cruise.</p>
+                </div>
+                <div class="assumption-item">
+                  <strong>Lambert Targeting Solver</strong>
+                  <p>Zero-revolution (single-pass) universal-variable Lambert solver assuming impulsive departure and arrival orbital burns.</p>
+                </div>
+                <div class="assumption-item">
+                  <strong>Excess Velocity Cost Metric</strong>
+                  <p>Porkchop cost maps rank total characteristic excess velocity (v∞,dep + v∞,arr) in km/s across discrete grid samples.</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </main>
+
+        <footer class="app-footer">
+          <div class="footer-left">
+            <span>CGVR Lab · Interplanetary Mission Planner</span>
+            <span class="footer-dot">•</span>
+            <span>WebXR &amp; Desktop Workstation</span>
+          </div>
+          <div class="footer-right">
+            <span>WebGL2 / Three.js Universal Orbit Mechanics</span>
+          </div>
+        </footer>
+      </div>
     </div>
     <script type="module" src="./src/main.js"></script>
   </body>

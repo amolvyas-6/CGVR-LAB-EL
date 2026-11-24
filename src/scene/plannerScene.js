@@ -4,8 +4,8 @@ import { createPorkchop } from './porkchop.js';
 import { createXRWorkbench } from '../xr/workbench.js';
 
 const MAX_DEVICE_PIXEL_RATIO = 1.5;
-const XR_FRAMEBUFFER_SCALE = 1.15;
-const XR_FOVEATION = 0.45;
+const XR_FRAMEBUFFER_SCALE = 2.0;
+const XR_FOVEATION = 0;
 
 function requireElement(value, name) {
   if (!value || typeof value.getBoundingClientRect !== 'function') {
