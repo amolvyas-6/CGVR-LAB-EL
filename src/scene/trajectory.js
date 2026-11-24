@@ -99,6 +99,10 @@ export function createTrajectory(scene) {
   return {
     setTransfer,
     setPosition,
+    setImmersiveStyle(immersive) {
+      material.color.setHex(immersive ? 0x8be2db : 0x245da8);
+      markerMaterial.color.setHex(immersive ? 0xffad60 : 0xb45b28);
+    },
     clear,
     destroy() {
       if (disposed) return;

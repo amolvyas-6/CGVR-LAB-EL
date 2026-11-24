@@ -4,6 +4,8 @@ import { createPorkchop } from './porkchop.js';
 import { createXRWorkbench } from '../xr/workbench.js';
 
 const MAX_DEVICE_PIXEL_RATIO = 1.5;
+const XR_FRAMEBUFFER_SCALE = 1.15;
+const XR_FOVEATION = 0.45;
 
 function requireElement(value, name) {
   if (!value || typeof value.getBoundingClientRect !== 'function') {
@@ -66,6 +68,8 @@ export function createPlannerScene({
   renderer.setClearColor(0x000000, 0);
   renderer.autoClear = false;
   renderer.xr.enabled = true;
+  renderer.xr.setFramebufferScaleFactor(XR_FRAMEBUFFER_SCALE);
+  renderer.xr.setFoveation(XR_FOVEATION);
   renderer.info.autoReset = false;
   renderer.domElement.setAttribute('aria-hidden', 'true');
   renderer.domElement.style.position = 'absolute';
@@ -119,8 +123,6 @@ export function createPlannerScene({
       onXRAction,
     });
     if (latestAssetStatus) workbench.setAssetStatus(latestAssetStatus);
-    renderer.xr.addEventListener?.('sessionstart', onXRSessionStart);
-    renderer.xr.addEventListener?.('sessionend', onXRSessionEnd);
 
     if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(markLayoutDirty);
@@ -130,8 +132,6 @@ export function createPlannerScene({
     }
     window.addEventListener('resize', markLayoutDirty);
   } catch (error) {
-    renderer.xr.removeEventListener?.('sessionstart', onXRSessionStart);
-    renderer.xr.removeEventListener?.('sessionend', onXRSessionEnd);
     resizeObserver?.disconnect();
     workbench?.destroy();
     plot?.destroy();
@@ -149,18 +149,10 @@ export function createPlannerScene({
     renderer.render(scene, camera);
   }
 
-  function setImmersive(active) {
+  function setImmersive(active, referenceSpaceType) {
     if (disposed) return;
     immersive = Boolean(active);
-    workbench.setImmersive(immersive);
-  }
-
-  function onXRSessionStart() {
-    setImmersive(true);
-  }
-
-  function onXRSessionEnd() {
-    setImmersive(false);
+    workbench.setImmersive(immersive, referenceSpaceType);
   }
 
   function render() {
@@ -168,7 +160,6 @@ export function createPlannerScene({
     renderer.info.reset();
 
     if (renderer.xr.isPresenting) {
-      if (!immersive) setImmersive(true);
       renderer.setScissorTest(false);
       const previousAutoClear = renderer.autoClear;
       renderer.autoClear = true;
@@ -179,6 +170,8 @@ export function createPlannerScene({
       }
       return;
     }
+
+    if (immersive) setImmersive(false);
 
     // Local bounds are independent of page scroll; measuring here also catches
     // position-only layout changes not reported by ResizeObserver.
@@ -232,8 +225,6 @@ export function createPlannerScene({
     if (disposed) return;
     disposed = true;
     window.removeEventListener('resize', markLayoutDirty);
-    renderer.xr.removeEventListener?.('sessionstart', onXRSessionStart);
-    renderer.xr.removeEventListener?.('sessionend', onXRSessionEnd);
     resizeObserver?.disconnect();
     workbench.destroy();
     plot.destroy();

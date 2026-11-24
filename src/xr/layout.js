@@ -1,43 +1,56 @@
-export const JUPITER_FIT_RADIUS_METRES = 0.68;
+export const JUPITER_FIT_RADIUS_METRES = 0.76;
 export const JUPITER_ORBIT_RADIUS_AU = 5.204;
-export const XR_LARGER_SCALE_FACTOR = 1.35;
+export const XR_LARGER_SCALE_FACTOR = 1.25;
 
-// Positions are measured from a local-floor origin. They intentionally keep
-// the chart upright and the shared orrery low/left, rather than enclosing the
-// viewer in a desktop-sized floating window.
+const MODEL_SCALE_BY_TARGET = Object.freeze({
+  venus: 0.57,
+  mars: 0.46,
+  jupiter: JUPITER_FIT_RADIUS_METRES / JUPITER_ORBIT_RADIUS_AU,
+});
+
+const CHART_WING = Object.freeze({ width: 1.10, yawRadians: 0.49 });
+
 export const XR_LAYOUT = Object.freeze({
-  plot: Object.freeze({ center: Object.freeze([0.60, 2.02, -1.82]), width: 1.42, height: 0.90 }),
-  results: Object.freeze({ center: Object.freeze([0.60, 1.25, -1.80]), width: 1.42, height: 0.62 }),
+  eyeHeight: 1.6,
+  orrery: Object.freeze({ center: Object.freeze([0, 0.96, -1.69]) }),
+  plot: Object.freeze({ ...CHART_WING, center: Object.freeze([-1.14, 1.98, -1.80]), height: 0.74 }),
+  playback: Object.freeze({ ...CHART_WING, center: Object.freeze([-1.14, 1.51, -1.80]), height: 0.17 }),
+  results: Object.freeze({ ...CHART_WING, center: Object.freeze([-1.14, 1.175, -1.80]), height: 0.46 }),
   controls: Object.freeze({
-    center: Object.freeze([0.60, 0.53, -1.76]),
-    width: 1.42,
-    height: 0.82,
-    tiltRadians: -Math.PI / 10,
+    center: Object.freeze([1.17, 1.58, -1.79]),
+    width: 1.10,
+    height: 0.73,
+    yawRadians: -0.49,
+    tiltRadians: -0.10,
   }),
-  orrery: Object.freeze({ center: Object.freeze([-0.85, 0.73, -1.50]), tableRadius: 0.96 }),
 });
 
 export const XR_PLOT_CANVAS = Object.freeze({
   width: 1440,
   height: 1000,
-  // The rest of the face carries dates, flight-time ticks and the cost legend.
-  chart: Object.freeze({ x: 178, y: 190, width: 1160, height: 620 }),
+  chart: Object.freeze({ x: 178, y: 156, width: 1160, height: 650 }),
 });
 
-export const XR_RESULTS_CANVAS = Object.freeze({ width: 1440, height: 700 });
+export const XR_RESULTS_CANVAS = Object.freeze({ width: 1440, height: 650 });
 export const XR_CONTROLS_CANVAS = Object.freeze({ width: 1440, height: 960 });
+export const XR_PLAYBACK_CANVAS = Object.freeze({ width: 1440, height: 220 });
+export const XR_TIMELINE = Object.freeze({ left: 314, right: 1384, y: 140, height: 122, inset: 17 });
 
-/** Return the actual tabletop mapping from AU to metres for this target. */
+/** Keep the workbench upright even when the viewer is looking up or down. */
+export function viewerHeading({ x, y, z, w }, fallback = 0) {
+  const forwardX = -2 * (x * z + w * y);
+  const forwardZ = 2 * (x * x + y * y) - 1;
+  return Math.hypot(forwardX, forwardZ) > 0.1 ? Math.atan2(-forwardX, -forwardZ) : fallback;
+}
+
+/** Return the display mapping from AU to metres for this target. */
 export function getModelScale(target, larger = false) {
   if (typeof target !== 'string') throw new TypeError('target must be a planet name');
   const normalized = target.toLowerCase();
-  if (!['venus', 'mars', 'jupiter'].includes(normalized)) {
+  if (!Object.hasOwn(MODEL_SCALE_BY_TARGET, normalized)) {
     throw new RangeError('target must be Venus, Mars, or Jupiter');
   }
-  const base = normalized === 'jupiter'
-    ? JUPITER_FIT_RADIUS_METRES / JUPITER_ORBIT_RADIUS_AU
-    : 0.3;
-  const metresPerAu = base * (larger ? XR_LARGER_SCALE_FACTOR : 1);
+  const metresPerAu = MODEL_SCALE_BY_TARGET[normalized] * (larger ? XR_LARGER_SCALE_FACTOR : 1);
   return {
     metresPerAu,
     fit: normalized === 'jupiter',

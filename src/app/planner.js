@@ -15,6 +15,8 @@ export const DEFAULT_MISSION_INPUTS = Object.freeze({
   resolution: '60',
 });
 
+export const BUDGET_DEFAULT_LIMITS = Object.freeze({ none: '0', cost: '6', c3: '15' });
+
 const TARGETS = new Set(Object.keys(TARGET_TOF_PRESETS));
 
 function readFiniteNumber(value) {

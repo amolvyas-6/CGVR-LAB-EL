@@ -25,61 +25,66 @@
             </div>
           </div>
         </div>
-        <p class="vr-status" id="vr-status" role="status" aria-live="polite">Checking whether immersive WebXR is available. The desktop planner remains usable.</p>
+        <p class="vr-status" id="vr-status" role="status" aria-live="polite">Checking for an immersive VR runtime…</p>
       </header>
 
       <main>
         <section class="mission-section" aria-labelledby="mission-heading">
           <div class="section-heading">
             <div>
-              <h2 id="mission-heading">Mission search</h2>
-              <p class="section-context">Inputs define a discrete search window; compute to update the results.</p>
+              <h2 id="mission-heading">Plan a transfer</h2>
+              <p class="section-context">Choose a destination from Earth and compute a map of possible transfers.</p>
             </div>
           </div>
 
           <div class="mission-layout">
             <form id="mission-form" class="mission-form" novalidate>
-              <div class="form-grid">
-                <div class="field field-wide">
-                  <label for="target">Target planet</label>
+              <div class="mission-primary">
+                <div class="field">
+                  <label for="target">Destination</label>
                   <select id="target" name="target">
                     <option value="Venus">Venus</option>
                     <option value="Mars" selected>Mars</option>
                     <option value="Jupiter">Jupiter</option>
                   </select>
                 </div>
-                <div class="field">
-                  <label for="departure-start">Departure window starts (UTC)</label>
-                  <input id="departure-start" name="departureStart" type="date" required value="2026-07-01" />
-                </div>
-                <div class="field">
-                  <label for="departure-end">Departure window ends (UTC)</label>
-                  <input id="departure-end" name="departureEnd" type="date" required value="2027-03-01" />
-                </div>
-                <div class="field">
-                  <label for="tof-min">Time of flight minimum (days)</label>
-                  <input id="tof-min" name="tofMinDays" type="number" min="0.001" step="any" required value="100" />
-                </div>
-                <div class="field">
-                  <label for="tof-max">Time of flight maximum (days)</label>
-                  <input id="tof-max" name="tofMaxDays" type="number" min="0.001" step="any" required value="400" />
-                </div>
-                <div class="field field-wide">
-                  <label for="resolution">Grid resolution per axis</label>
-                  <input id="resolution" name="resolution" type="number" min="2" max="120" step="1" required value="60" />
-                  <span class="field-help">2–120 samples on each axis</span>
-                </div>
-              </div>
-              <p class="form-error" id="form-errors" role="alert" hidden></p>
-              <div class="form-actions">
                 <button class="primary-button" id="compute-grid" type="submit">Compute grid</button>
-                <span class="form-note" id="grid-summary">No grid computed. Grid computation runs in a replaceable local worker.</span>
               </div>
+              <p class="form-note" id="grid-summary">Preparing the default Mars grid…</p>
+              <p class="form-error" id="form-errors" role="alert" hidden></p>
+
+              <details class="search-options">
+                <summary>Search settings</summary>
+                <p class="control-help">Change the dates, flight duration, or sample count, then compute a new grid.</p>
+                <div class="form-grid">
+                  <div class="field">
+                    <label for="departure-start">First departure (UTC)</label>
+                    <input id="departure-start" name="departureStart" type="date" required value="2026-07-01" />
+                  </div>
+                  <div class="field">
+                    <label for="departure-end">Last departure (UTC)</label>
+                    <input id="departure-end" name="departureEnd" type="date" required value="2027-03-01" />
+                  </div>
+                  <div class="field">
+                    <label for="tof-min">Shortest flight (days)</label>
+                    <input id="tof-min" name="tofMinDays" type="number" min="0.001" step="any" required value="100" />
+                  </div>
+                  <div class="field">
+                    <label for="tof-max">Longest flight (days)</label>
+                    <input id="tof-max" name="tofMaxDays" type="number" min="0.001" step="any" required value="400" />
+                  </div>
+                  <div class="field">
+                    <label for="resolution">Samples per axis</label>
+                    <input id="resolution" name="resolution" type="number" min="2" max="120" step="1" required value="60" />
+                    <span class="field-help">More samples make a finer map. Range 2–120.</span>
+                  </div>
+                </div>
+              </details>
             </form>
 
             <section class="budget-panel" aria-labelledby="budget-heading">
-              <h3 id="budget-heading">Feasibility budget</h3>
-              <p class="control-help">A budget filters feasibility only; proxy cost remains the search objective.</p>
+              <h3 id="budget-heading">Budget filter</h3>
+              <p class="control-help">Set a limit to dim transfers that exceed it.</p>
               <div class="field">
                 <label for="budget-type">Budget type</label>
                 <select id="budget-type" name="budgetType">
@@ -88,7 +93,7 @@
                   <option value="c3">Departure C3</option>
                 </select>
               </div>
-              <div class="field budget-limit-field">
+              <div class="field budget-limit-field" id="budget-limit-field" hidden>
                 <label for="budget-limit">Budget limit</label>
                 <div class="unit-input">
                   <input id="budget-limit" name="budgetLimit" type="number" min="0" step="any" value="0" disabled />
@@ -104,7 +109,7 @@
           <div class="section-heading visual-heading">
             <div>
               <h2 id="visual-heading">Mission geometry and transfer cost</h2>
-              <p class="section-context">Select a discrete porkchop cell to inspect its propagated transfer.</p>
+              <p class="section-context">Pick a cell on the cost map, then play or scrub the transfer.</p>
             </div>
             <div id="display-settings" class="display-settings" aria-label="Display settings"></div>
           </div>
@@ -127,7 +132,7 @@
 
             <section class="plot-panel" aria-labelledby="plot-heading">
               <div class="viewport-heading">
-                <h3 id="plot-heading">Porkchop plot</h3>
+                <h3 id="plot-heading">Transfer cost map</h3>
                 <span>Transfer-cost proxy · km/s</span>
               </div>
               <div class="plot-axis-layout">
@@ -175,8 +180,8 @@
               </div>
             </div>
             <div class="snap-panel">
-              <button class="secondary-button" id="snap-optimum" type="button" disabled>Snap to optimum</button>
-              <p>Snaps to the lowest-cost feasible cell, or the unconstrained minimum when no budget is active.</p>
+              <button class="secondary-button" id="snap-optimum" type="button" disabled>Best transfer</button>
+              <p>Selects the lowest-cost cell that meets your budget.</p>
             </div>
           </div>
         </section>
@@ -226,6 +231,37 @@
               <div><dt>Transfer branch</dt><dd id="selected-branch">—</dd></div>
               <div><dt>Budget feasibility</dt><dd id="selected-feasibility">—</dd></div>
             </dl>
+            <section class="propellant-panel" aria-labelledby="propellant-heading">
+              <h4 id="propellant-heading">Propellant estimate</h4>
+              <dl class="selected-values">
+                <div><dt>Estimated propellant</dt><dd id="propellant-mass">—</dd></div>
+                <div><dt>Estimated propellant cost (USD)</dt><dd id="propellant-cost">—</dd></div>
+                <div><dt>Total speed change (Δv)</dt><dd id="propellant-total-dv">—</dd></div>
+                <div><dt>Earth departure burn</dt><dd id="propellant-departure-dv">—</dd></div>
+                <div><dt>Destination capture burn</dt><dd id="propellant-capture-dv">—</dd></div>
+              </dl>
+              <p class="selection-status" id="propellant-orbits"></p>
+              <p class="selection-status" id="propellant-status" role="status" aria-live="polite"></p>
+              <details class="search-options" id="propellant-settings">
+                <summary>Propellant settings</summary>
+                <p class="control-help">The dry mass includes the spacecraft and payload after both burns. Use an assumed price per kilogram for the propellant bill.</p>
+                <div class="form-grid">
+                  <div class="field">
+                    <label for="dry-mass-kg">Dry mass (kg)</label>
+                    <input id="dry-mass-kg" name="dryMassKg" type="number" min="0" step="any" />
+                  </div>
+                  <div class="field">
+                    <label for="specific-impulse-seconds">Engine specific impulse (s)</label>
+                    <input id="specific-impulse-seconds" name="specificImpulseSeconds" type="number" min="0" step="any" />
+                  </div>
+                  <div class="field">
+                    <label for="price-per-kg-usd">Assumed propellant price (USD/kg)</label>
+                    <input id="price-per-kg-usd" name="pricePerKgUsd" type="number" min="0" step="any" />
+                    <span class="field-help">Leave blank to show mass only.</span>
+                  </div>
+                </div>
+              </details>
+            </section>
           </section>
         </section>
 
@@ -242,7 +278,7 @@
 
         <section class="assumptions-section" aria-labelledby="assumptions-heading">
           <h2 id="assumptions-heading">Model assumptions</h2>
-          <p>Patched-conic, Sun-only two-body transfer; impulsive departure/arrival; zero-revolution (single-pass) Lambert; no perturbations or planetary gravity wells during flight. The transfer-cost proxy is v∞,dep + v∞,arr, not a modeled parking-orbit burn or launch-system delta-v. Plot cells are discrete samples; contours are visual guides.</p>
+          <p>Patched-conic, Sun-only two-body transfer; impulsive departure/arrival; zero-revolution (single-pass) Lambert; no perturbations or planetary gravity wells during flight. The chart ranks v∞,dep + v∞,arr. The selected transfer also shows an ideal propellant estimate for departure from Earth orbit and capture into destination orbit. Plot cells are discrete samples.</p>
         </section>
       </main>
 

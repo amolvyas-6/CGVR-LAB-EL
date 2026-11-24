@@ -2,6 +2,8 @@
 
 A VR-first engineering workbench for examining Earth-origin transfer opportunities to Venus, Mars, and Jupiter. The immersive scene combines a discrete porkchop plot, an ephemeris orrery, the selected Lambert transfer and spacecraft, budget feasibility, and the sampled-grid minimum. Desktop remains a complete fallback.
 
+See [Project parameters and results](docs/project-parameters.md) for the controls, the cost map, and a worked Mars propellant estimate.
+
 ## Requirements and local use
 
 - Node.js `^22.12.0`, `^24.0.0`, or `>=26.0.0`
@@ -26,30 +28,30 @@ Vite uses a relative base, so the production build can be hosted below a static-
 
 1. Open the app in Chrome with the **Meta Immersive Web Emulator** extension enabled for this site, then reload. Choose **Meta Quest 3** in the emulator controls; IWE 2.0 uses an in-page overlay, while older releases use DevTools → WebXR. Oculus/Quest Touch profiles are also supported by the input mapping.
 2. Use the prominent **Enter VR** button in the page header and accept the browser's immersive-session prompt. The page is not entered automatically.
-3. In the headset/emulator view, aim a controller ray at a workbench control and press its trigger. Hovering a plot cell previews the date, TOF, cost proxy, and feasibility; triggering a valid cell selects and propagates it.
+3. The workbench opens at your eye height and facing direction. Aim with either controller and press its trigger to select. Hovering a plot cell previews the date, TOF, cost proxy, and feasibility; triggering a valid cell selects and propagates it.
 4. Controller profile instructions appear in the workbench. Verified Touch profiles provide a horizontal thumbstick scrub, left **X** target-cycle shortcut, and right **A** snap shortcut. Ray buttons provide the same core actions for unknown or unrecognized profiles; optional shortcuts are not guessed.
 5. Exit with the in-world **Exit VR** control or the header button. The desktop scissored views and display settings are restored. Playback starts paused and pauses on VR entry or grid recomputation.
 
-The emulator is useful for exercising session entry, controller events, stereo rendering, and the in-world workflow, but its frame rate is not a Quest performance measurement. Actual extension/headset acceptance must be recorded separately; this README does not claim that an emulator run has passed.
+The Quest 3 emulator rehearsal covered stereo rendering, both controller rays, timeline scrubbing, budgets, grid recomputation, recentering, and exit and re-entry. Headset performance requires a separate run on physical hardware.
 
 ## VR mission workflow
 
-- Earth is the origin. Choose **Venus**, **Mars**, or **Jupiter**. Target presets set TOF bounds (Venus 80–220 days, Mars 100–400 days, Jupiter 450–1200 days); these are search bounds, not predicted opportunities.
-- Use the in-world date and TOF steppers (7- and 10-day increments), grid-resolution steps (2–120 per axis), and **Compute grid**. A draft range change immediately marks and clears the old grid; compute explicitly to start the replacement. A target shortcut also leaves a dirty draft until Compute is selected.
-- Set a transfer-cost-proxy budget (`v∞,dep + v∞,arr`, km/s) or departure-C3 budget (`v∞,dep²`, km²/s²). Budget edits rescan feasibility and the discrete optimum without recomputing the porkchop values. No-feasible and invalid-budget states are shown and disable Snap as appropriate.
-- **Snap to optimum** selects the lowest-cost feasible sampled cell when a budget is active, otherwise the unconstrained minimum. Select another valid plot cell to inspect departure/arrival UTC, TOF, cost proxy, C3, departure/arrival v∞, transfer branch, and feasibility.
-- **Play/Pause** or the in-world time bar animates the transfer. Planet positions and spacecraft propagation use the same mission epoch. Thumbstick scrubbing is dead-zoned, time-based, and bounded to the transfer interval.
-- The workbench includes larger/fit scale, exaggerated/physical body radii, reset, and exit controls. The standard display is about 0.3 m/AU for Venus and Mars; Jupiter uses a disclosed fit scale. Scale and radius choices affect only visualization, not physics.
-- **Reset mission inputs** explicitly restores the Mars defaults and clears the budget, including recovery from malformed desktop drafts without leaving VR. Compute afterwards. **Reset scale** restores the visualization settings; it does not move or recenter the headset.
+- Earth is the origin. In **Mission**, choose **Venus**, **Mars**, or **Jupiter**. Target presets set TOF bounds (Venus 80–220 days, Mars 100–400 days, Jupiter 450–1200 days); these are search bounds, not predicted opportunities.
+- Open **Search** for the in-world date and TOF steppers (7- and 10-day increments), grid-resolution steps (2–120 per axis), and **Compute grid**. A draft range change immediately marks and clears the old grid; compute explicitly to start the replacement. A target shortcut also leaves a dirty draft until Compute is selected.
+- Set a transfer-cost-proxy budget (`v∞,dep + v∞,arr`, km/s) or departure-C3 budget (`v∞,dep²`, km²/s²). Budget edits rescan feasibility and the discrete optimum without recomputing the porkchop values. No-feasible and invalid-budget states are shown and disable **Best transfer** as appropriate.
+- **Best transfer** selects the lowest-cost feasible sampled cell when a budget is active, otherwise the unconstrained minimum. Select another valid plot cell to inspect departure/arrival UTC, TOF, cost proxy, C3, departure/arrival v∞, transfer branch, and feasibility.
+- Use **Play/Pause** to animate the transfer. Point at the timeline and hold the trigger while moving the ray to scrub. Planet positions and spacecraft propagation use the same mission epoch. Thumbstick scrubbing is dead-zoned, time-based, and bounded to the transfer interval.
+- Select **Recenter** to bring the workbench to your current position and facing direction. The **Display** tab also adjusts model scale and body radii. The standard display uses 0.57 m/AU for Venus and 0.46 m/AU for Mars. Jupiter uses a fit scale shown in VR. Scale and radius choices affect only visualization, not physics.
+- **Display → Restore Mars defaults** restores the Mars defaults and clears the budget, including recovery from malformed desktop drafts without leaving VR. Compute afterwards. **Reset display** restores the model scale and enlarged radii.
 - Results include both the unrestricted and budget-feasible discrete grid minimum, including the no-feasible case. The scene also discloses the Sun-only, zero-revolution patched-conic model, asset errors, worker status, active controller instructions, and mode-aware rendering telemetry.
 
 ## Desktop fallback
 
-The browser page retains the original mission form and workflow. Choose inputs and **Compute grid**; click or keyboard-select the porkchop plot to inspect a propagated cell. Arrow keys move plot hover and Enter selects; the orrery responds to arrow keys, `+`/`−` zoom, and Home resets its desktop camera. Desktop budget, time scrub/playback, and Snap controls operate on the same application state as the in-world controls. A WebGL/WebXR failure leaves numerical mission computation available.
+The browser page opens with destination and budget controls. Expand **Search settings** to change dates, flight duration, or samples. Choose inputs and **Compute grid**; click or keyboard-select the porkchop plot to inspect a propagated cell. Arrow keys move plot hover and Enter selects; the orrery responds to arrow keys, `+`/`−` zoom, and Home resets its desktop camera. Desktop budget, time scrub/playback, and Best transfer operate on the same application state as the in-world controls. A WebGL/WebXR failure leaves numerical mission computation available.
 
 ## Model and interpretation
 
-The model uses a heliocentric J2000 mean-ecliptic frame, km and km/s, offline `astronomy-engine` ephemerides, zero-revolution (single-pass) universal-variable Lambert solutions, and Sun-only two-body propagation. It assumes patched conics, impulsive maneuvers, point-mass planets, and no perturbations or planetary gravity wells during flight. It does not model parking-orbit burns. The proxy is not an unqualified total delta-v or a launch-system capability.
+The model uses a heliocentric J2000 mean-ecliptic frame, km and km/s, offline `astronomy-engine` ephemerides, zero-revolution (single-pass) universal-variable Lambert solutions, and Sun-only two-body propagation. It assumes patched conics, impulsive maneuvers, point-mass planets, and no perturbations or planetary gravity wells during flight. The map ranks the combined departure and arrival excess speeds. The selected trip also includes ideal circular-orbit burns, estimated propellant, and an illustrative propellant bill using editable assumptions.
 
 The Lambert implementation masks exact collinearity and transfer angles within approximately `1e-7` radians of collinearity; ill-conditioned geometries remain invalid rather than being silently nudged. Every candidate must propagate to within 1 km of its requested endpoint. See [numerical methods and validation scope](docs/numerical-methods.md) for details and references.
 
@@ -76,4 +78,4 @@ Physics validation and the benchmark are not GPU or headset performance claims. 
 - **Phase 2:** validated numerical transfers and the real-data desktop planner.
 - **Phase 3:** in-world mission controls and results, controller interaction, module-worker replacement, manual WebXR entry, and mode-aware measurements.
 
-Testing is paused at the owner's request. Further browser/VR validation will use the MCP server supplied in a later session, followed by immersion and interaction changes based on owner feedback. See [Phase 3 handoff](docs/phase-3-handoff.md) and the [VR demonstration guide](docs/vr-demo-guide.md). Full immersive acceptance is not claimed.
+Use the [VR demonstration guide](docs/vr-demo-guide.md) for the workflow to verify on the Meta emulator or a headset.

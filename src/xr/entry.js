@@ -1,280 +1,165 @@
-import { VRButton } from 'three/addons/webxr/VRButton.js';
+const SESSION_OPTIONS = { optionalFeatures: ['local-floor'] };
 
-function removeButtonHandlers(button, onEnter, onRetry) {
-  if (!button) return;
-  button.removeEventListener('click', onEnter, true);
-  button.removeEventListener('click', onRetry);
-  button.onclick = null;
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
-function createManualButton(label, disabled = false) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'vr-entry-button';
-  button.textContent = label;
-  button.disabled = disabled;
-  return button;
-}
-
-function setText(callback, message, status) {
-  try {
-    callback?.(message, status);
-  } catch (error) {
-    console.warn('Could not update WebXR entry status.', error);
-  }
-}
-
-/** Create a user-gesture-only immersive VR entry control with guarded setup. */
+/** Own one button and one immersive session, requested only from a user gesture. */
 export function createVREntry({ renderer, host, onStatus, onSessionState } = {}) {
   if (!renderer?.xr || !host) throw new TypeError('renderer.xr and a VR entry host are required.');
 
-  let disposed = false;
-  let currentSession = null;
-  let button = null;
-  let sessionEndedHandler = null;
+  const xr = globalThis.navigator?.xr;
+  const button = host.querySelector('button') ?? document.createElement('button');
+  button.id = 'vr-entry-button';
+  button.classList.add('vr-entry-button');
+  button.type = 'button';
+  if (button.parentNode !== host) host.replaceChildren(button);
+
+  let state = 'checking';
   let supportAttempt = 0;
-  let sessionActive = false;
-  const sessionOptions = { optionalFeatures: ['local-floor', 'bounded-floor'] };
+  let current = null;
+  let attaching = null;
+  let disposed = false;
 
-  function updateStatus(message, status = '') {
-    setText(onStatus, message, status);
-  }
-
-  function publishSessionState(active, session = null) {
-    if (sessionActive === active) return;
-    sessionActive = active;
-    try {
-      onSessionState?.(active, session);
-    } catch (error) {
-      console.error('WebXR session state callback failed.', error);
-    }
-  }
-
-  function replaceButton(nextButton) {
-    if (button) removeButtonHandlers(button, handleEnter, handleRetry);
-    button?.remove();
-    button = nextButton;
-    button.id = 'vr-entry-button';
-    button.classList.add('vr-entry-button');
-    host.replaceChildren(button);
-  }
-
-  function showRetry(message, status = 'warning') {
+  function render(nextState, label, message, kind = '') {
     if (disposed) return;
-    const retry = createManualButton('Retry VR support check');
-    retry.addEventListener('click', handleRetry);
-    replaceButton(retry);
-    updateStatus(message, status);
+    state = nextState;
+    button.textContent = label;
+    button.disabled = ['checking', 'unavailable', 'starting', 'ending'].includes(state);
+    onStatus?.(message, kind);
+  }
+
+  function ready(message = 'Immersive VR is available.') {
+    render('ready', 'Enter VR', message, 'ready');
   }
 
   async function checkSupport() {
-    if (disposed) return;
     const attempt = ++supportAttempt;
-    const xr = globalThis.navigator?.xr;
     if (globalThis.isSecureContext === false) {
-      replaceButton(createManualButton('VR needs HTTPS', true));
-      updateStatus('WebXR requires HTTPS or localhost. The desktop planner remains available.', 'warning');
+      render('unavailable', 'VR needs HTTPS', 'Open the planner on HTTPS or localhost to use WebXR.', 'warning');
       return;
     }
-    if (!xr || typeof xr.isSessionSupported !== 'function') {
-      replaceButton(createManualButton('WebXR unavailable', true));
-      updateStatus('This browser does not expose WebXR. Use the desktop planner or a WebXR-capable browser.', 'warning');
+    if (typeof xr?.isSessionSupported !== 'function') {
+      render('unavailable', 'WebXR unavailable', 'Open the planner in a browser with immersive WebXR support.', 'warning');
       return;
     }
-
-    replaceButton(createManualButton('Checking VR support…', true));
-    updateStatus('Checking immersive WebXR support…', 'working');
-    let supported;
+    render('checking', 'Checking VR support…', 'Checking for an immersive VR runtime…');
     try {
-      supported = await xr.isSessionSupported('immersive-vr');
+      const supported = await xr.isSessionSupported('immersive-vr');
+      if (disposed || attempt !== supportAttempt) return;
+      if (supported) ready();
+      else render('retry', 'Check VR again', 'Connect a headset or enable the WebXR emulator, then check again.', 'warning');
     } catch (error) {
       if (disposed || attempt !== supportAttempt) return;
-      const reason = error instanceof Error ? error.message : String(error);
-      showRetry(`WebXR support check failed: ${reason}. Retry, or continue with the desktop planner.`, 'error');
-      return;
+      render('retry', 'Check VR again', `WebXR support check failed. ${errorMessage(error)}`, 'error');
     }
-    if (disposed || attempt !== supportAttempt) return;
-    if (!supported) {
-      showRetry('Immersive VR is not available in this browser or device. Retry after enabling a WebXR runtime.', 'warning');
-      return;
-    }
-
-    // VRButton's built-in offerSession path may start a session without a click.
-    // Use its official control only in browsers without that automatic API; in
-    // either case this module owns the sole user-gesture requestSession call.
-    if (xr.offerSession !== undefined) {
-      replaceButton(createManualButton('Enter VR'));
-    } else {
-      let officialButton;
-      try {
-        officialButton = VRButton.createButton(renderer, sessionOptions);
-      } catch (error) {
-        showRetry(`Could not prepare the Three.js VR entry control: ${error instanceof Error ? error.message : String(error)}. Retry, or continue on desktop.`, 'error');
-        return;
-      }
-      if (!(globalThis.HTMLButtonElement && officialButton instanceof globalThis.HTMLButtonElement)) {
-        replaceButton(createManualButton('Enter VR'));
-      } else {
-        officialButton.removeAttribute('id');
-        officialButton.type = 'button';
-        officialButton.className = 'vr-entry-button';
-        replaceButton(officialButton);
-      }
-    }
-    button.disabled = false;
-    button.textContent = 'Enter VR';
-    button.addEventListener('click', handleEnter, true);
-    updateStatus('VR is ready. Enter manually when you are ready; the desktop planner stays available.', 'ready');
   }
 
-  async function handleEnter(event) {
-    if (event) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (event.isTrusted === false) return;
-    }
-    if (disposed) return;
-    if (currentSession) {
-      try {
-        await currentSession.end();
-      } catch (error) {
-        restoreAfterSessionError(error);
-      }
-      return;
-    }
-    const xr = globalThis.navigator?.xr;
-    if (!xr || typeof xr.requestSession !== 'function') {
-      showRetry('The WebXR session API became unavailable. Retry the support check.', 'error');
-      return;
-    }
+  function onDeviceChange() {
+    if (['checking', 'ready', 'retry'].includes(state)) void checkSupport();
+  }
 
-    button.disabled = true;
-    button.textContent = 'Starting VR…';
-    updateStatus('Requesting immersive VR session…', 'working');
-    let request;
+  async function closeSession(session) {
     try {
-      // Invoke requestSession before awaiting anything so the headset prompt is
-      // still tied to this explicit button gesture.
-      request = xr.requestSession('immersive-vr', sessionOptions);
+      await session.end();
     } catch (error) {
-      restoreAfterSessionError(error);
-      return;
+      console.warn('Could not close the WebXR session.', error);
     }
+  }
 
-    let session;
+  async function attachSession(record) {
+    const { session } = record;
+    // Discover floor space by requesting it. Some runtimes omit enabledFeatures.
+    let floorSpace = null;
     try {
-      session = await request;
+      floorSpace = await session.requestReferenceSpace('local-floor');
+    } catch {
+      // Immersive VR also supplies a viewer-relative local space.
+    }
+    if (disposed || current !== record) return;
+    renderer.xr.setReferenceSpaceType('local');
+    await renderer.xr.setSession(session);
+    if (disposed || current !== record) return;
+    if (floorSpace) renderer.xr.setReferenceSpace(floorSpace);
+    record.active = true;
+    onSessionState?.(true, session, floorSpace ? 'local-floor' : 'local');
+    render('active', 'Exit VR', 'VR is active. Use the controller rays to explore the workbench.', 'ready');
+  }
+
+  async function startSession() {
+    render('starting', 'Starting VR…', 'Waiting for the immersive VR session…');
+    let record = null;
+    try {
+      // Call requestSession before the first await to keep the user gesture.
+      const session = await xr.requestSession('immersive-vr', SESSION_OPTIONS);
       if (disposed) {
-        await endSessionSafely(session);
+        await closeSession(session);
         return;
       }
-      currentSession = session;
-      sessionEndedHandler = () => {
-        if (currentSession !== session) return;
-        session.removeEventListener?.('end', sessionEndedHandler);
-        sessionEndedHandler = null;
-        currentSession = null;
-        void Promise.resolve().then(() => {
-          if (!disposed) publishSessionState(false, session);
+      record = { session, active: false };
+      current = record;
+      session.addEventListener('end', () => {
+        if (current !== record) return;
+        current = null;
+        // Three.js also handles this event and restores its desktop framebuffer.
+        queueMicrotask(() => {
+          if (record.active) onSessionState?.(false, session);
+          if (!disposed && current === null && state !== 'starting') ready('VR session ended.');
         });
-        if (!disposed && button?.isConnected) {
-          button.disabled = false;
-          button.textContent = 'Enter VR';
-          updateStatus('VR session ended. Enter again whenever you are ready.', '');
-        }
-      };
-      session.addEventListener?.('end', sessionEndedHandler, { once: true });
-
-      const enabledFeatures = session.enabledFeatures;
-      const hasLocalFloor = enabledFeatures && typeof enabledFeatures.includes === 'function'
-        ? enabledFeatures.includes('local-floor')
-        : false;
-      renderer.xr.setReferenceSpaceType(hasLocalFloor ? 'local-floor' : 'local');
-      await renderer.xr.setSession(session);
-      if (disposed) {
-        await endSessionSafely(session);
-        return;
+      }, { once: true });
+      const pending = attachSession(record);
+      attaching = pending;
+      try {
+        await pending;
+      } finally {
+        attaching = null;
       }
-      publishSessionState(true, session);
-      button.disabled = false;
-      button.textContent = 'Exit VR';
-      updateStatus('Immersive VR active. Use controller rays or the profile instructions in the workbench.', 'ready');
+      if (!disposed && current === null && state === 'starting') ready('VR session ended.');
     } catch (error) {
-      if (session && currentSession === session) {
-        session.removeEventListener?.('end', sessionEndedHandler);
-        sessionEndedHandler = null;
-        currentSession = null;
+      if (record && current === record) {
+        current = null;
+        await closeSession(record.session);
+        if (record.active) onSessionState?.(false, record.session);
       }
-      if (session) await endSessionSafely(session);
-      if (!disposed) restoreAfterSessionError(error);
+      render('ready', 'Retry VR entry', `Could not start VR. ${errorMessage(error)}`, 'error');
     }
   }
 
-  function restoreAfterSessionError(error) {
-    if (disposed) return;
-    const reason = error instanceof Error ? error.message : String(error);
-    if (button?.isConnected) {
-      button.disabled = false;
-      button.textContent = 'Retry VR entry';
-    }
-    updateStatus(`Could not start immersive VR: ${reason}. Retry, or continue with the desktop planner.`, 'error');
-  }
-
-  async function endSessionSafely(session) {
+  async function exitSession() {
+    if (disposed || state !== 'active' || !current) return;
+    const record = current;
+    render('ending', 'Exiting VR…', 'Closing the immersive VR session…');
     try {
-      if (session && session.end && session.ended !== true) await session.end();
+      await record.session.end();
     } catch (error) {
-      console.warn('Could not end the WebXR session cleanly.', error);
+      if (current === record) render('active', 'Exit VR', `Could not exit VR. ${errorMessage(error)}`, 'error');
     }
   }
 
-  function reportSupportCheckFailure(error) {
-    if (disposed) return;
-    const reason = error instanceof Error ? error.message : String(error);
-    showRetry(`WebXR setup failed: ${reason}. Retry, or continue with the desktop planner.`, 'error');
+  function onClick(event) {
+    if (disposed || event.isTrusted === false) return;
+    if (state === 'ready') void startSession();
+    else if (state === 'active') void exitSession();
+    else if (state === 'retry') void checkSupport();
   }
 
-  async function handleRetry(event) {
-    event?.preventDefault?.();
-    if (disposed) return;
-    try {
-      await checkSupport();
-    } catch (error) {
-      reportSupportCheckFailure(error);
-    }
-  }
-
-  replaceButton(createManualButton('Checking VR support…', true));
-  void checkSupport().catch(reportSupportCheckFailure);
+  button.addEventListener('click', onClick);
+  xr?.addEventListener?.('devicechange', onDeviceChange);
+  void checkSupport();
 
   return {
-    async exitSession() {
-      if (!currentSession) return;
-      const session = currentSession;
-      try {
-        await session.end();
-      } catch (error) {
-        if (!disposed) updateStatus(`Could not end VR session: ${error instanceof Error ? error.message : String(error)}`, 'error');
-      }
-    },
-    destroy() {
-      if (disposed) return Promise.resolve();
+    exitSession,
+    async destroy() {
+      if (disposed) return;
       disposed = true;
-      supportAttempt += 1;
-      let endPromise = Promise.resolve();
-      if (currentSession) {
-        const session = currentSession;
-        if (sessionEndedHandler) session.removeEventListener?.('end', sessionEndedHandler);
-        sessionEndedHandler = null;
-        currentSession = null;
-        publishSessionState(false, session);
-        endPromise = endSessionSafely(session);
+      button.removeEventListener('click', onClick);
+      xr?.removeEventListener?.('devicechange', onDeviceChange);
+      if (attaching) await attaching.catch(() => {});
+      if (current) {
+        const { session } = current;
+        current = null;
+        await closeSession(session);
       }
-      removeButtonHandlers(button, handleEnter, handleRetry);
-      button?.remove();
-      button = null;
-      host.replaceChildren();
-      return endPromise;
     },
   };
 }

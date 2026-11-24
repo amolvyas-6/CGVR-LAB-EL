@@ -1,4 +1,5 @@
 import {
+  BUDGET_DEFAULT_LIMITS,
   DEFAULT_MISSION_INPUTS,
   TARGET_TOF_PRESETS,
 } from './planner.js';
@@ -17,7 +18,6 @@ const STEP_FIELDS = new Set([
   'resolution',
 ]);
 const BUDGET_TYPES = new Set(['none', 'cost', 'c3']);
-const BUDGET_DEFAULTS = Object.freeze({ none: '0', cost: '6', c3: '15' });
 
 function isPlainObject(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -206,7 +206,7 @@ export function applyMissionAction(inputs, budgetInput, action) {
     }
     const nextBudget = {
       type: action.value,
-      limit: BUDGET_DEFAULTS[action.value],
+      limit: BUDGET_DEFAULT_LIMITS[action.value],
     };
     return actionResult({ ...inputs }, nextBudget, { budgetChanged: true });
   }

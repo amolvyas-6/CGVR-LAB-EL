@@ -1,15 +1,19 @@
 import * as THREE from 'three';
 import { createXRControllers } from './controllers.js';
+import { createStarfield } from './starfield.js';
 import { PORKCHOP_COLOUR_STOPS } from '../scene/porkchop.js';
 import { validateMissionInputs } from '../app/planner.js';
 import {
   getModelScale,
   panelLocalPointFromUV,
   progressFromUV,
+  viewerHeading,
   XR_CONTROLS_CANVAS,
   XR_LAYOUT,
+  XR_PLAYBACK_CANVAS,
   XR_PLOT_CANVAS,
   XR_RESULTS_CANVAS,
+  XR_TIMELINE,
 } from './layout.js';
 import {
   createTextPanel,
@@ -20,26 +24,37 @@ import {
 } from './textPanel.js';
 
 const PALETTE = Object.freeze({
-  paper: '#f5f7fa',
-  white: '#ffffff',
-  ink: '#243348',
-  steel: '#5d6d82',
-  blue: '#245da8',
-  amber: '#b17c45',
-  border: '#b8c4d1',
-  muted: '#e7edf3',
-  disabled: '#edf0f3',
-  error: '#973d34',
-  success: '#23684e',
+  space: '#101b2a',
+  panel: '#172638',
+  surface: '#22354a',
+  ink: '#f0f5fb',
+  secondary: '#b1c4d8',
+  accent: '#8be2db',
+  hover: '#355467',
+  border: '#496178',
+  disabled: '#192638',
+  error: '#ffac9c',
+  success: '#9fe1b8',
 });
 
+function drawPanel(context, width, height, color = PALETTE.panel) {
+  context.fillStyle = PALETTE.space;
+  context.fillRect(0, 0, width, height);
+  drawRoundedRect(context, 4, 4, width - 8, height - 8, 22, color, PALETTE.border);
+}
+
+const CONTROL_SECTIONS = Object.freeze({ mission: 'Mission', search: 'Search', display: 'Display' });
 const CONTROL_ROWS = Object.freeze({
-  target: 150,
-  departure: 285,
-  tof: 410,
-  resolution: 535,
-  budget: 665,
-  actions: 805,
+  tabs: 145,
+  destination: 314,
+  budgetType: 505,
+  budgetLimit: 673,
+  departure: 337,
+  flight: 513,
+  samples: 686,
+  display: 316,
+  reset: 530,
+  footer: 844,
 });
 
 function canvasFont(context, size, weight = 500) {
@@ -71,7 +86,7 @@ function displayEpoch(value) {
       ? date.toISOString().replace('T', ' ').replace(/:\d{2}\.000Z$/, 'Z')
       : '—';
   }
-  return formatDate(value);
+  return formatDate(value).replace(/\.\d{3}Z$/, 'Z');
 }
 
 function minimumLine(summary, hasGrid) {
@@ -112,18 +127,20 @@ function telemetryLine(telemetry) {
 }
 
 function profileInstructions(profile) {
-  if (typeof profile?.instructions === 'string' && profile.instructions.trim()) {
-    return profile.instructions.trim();
+  const sources = profile?.sources ?? [];
+  if (!sources.length) return 'Connect a controller to aim and select.';
+  const instructions = ['Aim and press the trigger'];
+  if (sources.some(({ mapping }) => mapping.horizontalAxisIndex !== null)) instructions.push('Stick ↔ scrub');
+  for (const { mapping } of sources) {
+    if (!mapping.shortcutAvailable) continue;
+    instructions.push(mapping.shortcut === 'snap' ? 'A best transfer' : 'X change target');
   }
-  if (Array.isArray(profile?.instructions) && profile.instructions.length > 0) {
-    return profile.instructions.filter((item) => typeof item === 'string').join(' · ');
-  }
-  return 'Aim + trigger selects · horizontal stick scrubs mission time · ray buttons are always available.';
+  return instructions.join('  ·  ');
 }
 
-function setPanelPosition(group, position, rotationX = 0) {
-  group.position.set(position[0], position[1], position[2]);
-  group.rotation.x = rotationX;
+function setPanelPosition(group, { center, tiltRadians = 0, yawRadians = 0 }) {
+  group.position.set(...center);
+  group.rotation.set(tiltRadians, yawRadians, 0, 'YXZ');
 }
 
 function getSnapshotScaleFlag(snapshot, fallback = false) {
@@ -150,26 +167,13 @@ export function createXRWorkbench({
 }) {
   const xrScene = new THREE.Scene();
   xrScene.name = 'VR-first mission workbench';
-  xrScene.background = new THREE.Color(PALETTE.paper);
+  xrScene.background = new THREE.Color(0x000000);
+  const sky = createStarfield();
+  xrScene.add(sky.stars);
 
-  let referenceSpace = 'local-floor';
-  if (typeof renderer.xr.setReferenceSpaceType === 'function') {
-    try {
-      renderer.xr.setReferenceSpaceType(referenceSpace);
-    } catch {
-      referenceSpace = 'local';
-      try {
-        renderer.xr.setReferenceSpaceType(referenceSpace);
-      } catch {
-        // Older implementations still use their default viewer-relative space.
-      }
-    }
-  }
-  try {
-    renderer.xr.setFoveation?.(1);
-  } catch {
-    // Foveation is an optional implementation capability.
-  }
+  let referenceSpace = 'local';
+  let sessionSpace = null;
+  let needsCentering = false;
 
   const xrRig = new THREE.Group();
   xrRig.name = 'Viewer and controller rig';
@@ -180,8 +184,8 @@ export function createXRWorkbench({
   xrScene.add(xrRig);
 
   const layoutRoot = new THREE.Group();
-  layoutRoot.name = 'Stationary tabletop workbench layout';
-  if (referenceSpace === 'local') layoutRoot.position.y = -1.6;
+  layoutRoot.name = 'Stationary workbench layout';
+
   xrScene.add(layoutRoot);
 
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.76);
@@ -213,17 +217,22 @@ export function createXRWorkbench({
 
   const plotRoot = new THREE.Group();
   plotRoot.name = 'Porkchop chart and scientific legend';
-  setPanelPosition(plotRoot, XR_LAYOUT.plot.center);
+  setPanelPosition(plotRoot, XR_LAYOUT.plot);
   layoutRoot.add(plotRoot);
 
   const resultsRoot = new THREE.Group();
-  resultsRoot.name = 'Selected transfer and playback readout';
-  setPanelPosition(resultsRoot, XR_LAYOUT.results.center);
+  resultsRoot.name = 'Selected transfer readout';
+  setPanelPosition(resultsRoot, XR_LAYOUT.results);
   layoutRoot.add(resultsRoot);
+
+  const playbackRoot = new THREE.Group();
+  playbackRoot.name = 'Mission playback';
+  setPanelPosition(playbackRoot, XR_LAYOUT.playback);
+  layoutRoot.add(playbackRoot);
 
   const controlsRoot = new THREE.Group();
   controlsRoot.name = 'Ray-pickable mission controls';
-  setPanelPosition(controlsRoot, XR_LAYOUT.controls.center, XR_LAYOUT.controls.tiltRadians);
+  setPanelPosition(controlsRoot, XR_LAYOUT.controls);
   layoutRoot.add(controlsRoot);
 
   const plotPanel = createTextPanel({
@@ -244,6 +253,15 @@ export function createXRWorkbench({
   });
   resultsRoot.add(resultsPanel.mesh);
 
+  const playbackPanel = createTextPanel({
+    width: XR_LAYOUT.playback.width,
+    height: XR_LAYOUT.playback.height,
+    pixelWidth: XR_PLAYBACK_CANVAS.width,
+    pixelHeight: XR_PLAYBACK_CANVAS.height,
+    name: 'Mission time and playback',
+  });
+  playbackRoot.add(playbackPanel.mesh);
+
   const controlsPanel = createTextPanel({
     width: XR_LAYOUT.controls.width,
     height: XR_LAYOUT.controls.height,
@@ -253,42 +271,16 @@ export function createXRWorkbench({
   });
   controlsRoot.add(controlsPanel.mesh);
 
-  // A quiet circular tabletop and thin rim orient the horizontal ephemeris
-  // model without adding stars, glow, or a game-like environment.
-  const table = new THREE.Mesh(
-    new THREE.CircleGeometry(XR_LAYOUT.orrery.tableRadius, 96),
-    new THREE.MeshBasicMaterial({ color: 0xe8edf2, side: THREE.FrontSide }),
-  );
-  table.name = 'Neutral orrery tabletop';
-  table.rotation.x = -Math.PI / 2;
-  table.position.set(
-    XR_LAYOUT.orrery.center[0],
-    XR_LAYOUT.orrery.center[1] - 0.012,
-    XR_LAYOUT.orrery.center[2],
-  );
-  layoutRoot.add(table);
-  const rim = new THREE.Mesh(
-    new THREE.RingGeometry(XR_LAYOUT.orrery.tableRadius - 0.006, XR_LAYOUT.orrery.tableRadius, 96),
-    new THREE.MeshBasicMaterial({ color: 0x9eacba, side: THREE.FrontSide }),
-  );
-  rim.name = 'Tabletop edge';
-  rim.rotation.x = -Math.PI / 2;
-  rim.position.set(
-    XR_LAYOUT.orrery.center[0],
-    XR_LAYOUT.orrery.center[1] - 0.008,
-    XR_LAYOUT.orrery.center[2],
-  );
-  layoutRoot.add(rim);
-
   const buttonSpecs = [];
-  const interactiveObjects = [];
-  const buttonMeshes = new Map();
+  // Opaque panel faces also stop rays from activating controls behind them.
+  const interactiveObjects = [plotPanel.mesh, resultsPanel.mesh, playbackPanel.mesh, controlsPanel.mesh];
   const buttonSpecsById = new Map();
   const reusableBudgetStepAction = { type: 'budgetStep', delta: 0 };
 
-  function addButton(id, x, y, width, height, action, label, { group = controlsRoot } = {}) {
-    const canvas = XR_CONTROLS_CANVAS;
-    const panel = XR_LAYOUT.controls;
+  function addButton(id, x, y, width, height, action, label, { playback = false, section = null } = {}) {
+    const group = playback ? playbackRoot : controlsRoot;
+    const canvas = playback ? XR_PLAYBACK_CANVAS : XR_CONTROLS_CANVAS;
+    const panel = playback ? XR_LAYOUT.playback : XR_LAYOUT.controls;
     const buttonWidth = width / canvas.width * panel.width;
     const buttonHeight = height / canvas.height * panel.height;
     const geometry = new THREE.PlaneGeometry(buttonWidth, buttonHeight);
@@ -313,85 +305,82 @@ export function createXRWorkbench({
     mesh.layers.set(31); // Ray-only hitbox: do not draw an invisible quad per eye.
     group.add(mesh);
     interactiveObjects.push(mesh);
-    buttonMeshes.set(id, mesh);
-    const spec = { id, x, y, width, height, action, label, mesh };
+    const spec = { id, x, y, width, height, action, label, mesh, playback, section };
     buttonSpecs.push(spec);
     buttonSpecsById.set(id, spec);
     return mesh;
   }
 
-  const targetButtons = ['Venus', 'Mars', 'Jupiter'];
-  targetButtons.forEach((target, index) => {
-    addButton(`target-${target.toLowerCase()}`, 300 + index * 420, CONTROL_ROWS.target, 350, 86,
-      { type: 'target', target }, target);
-  });
-
-  addButton('departure-start-minus', 145, CONTROL_ROWS.departure, 156, 76,
-    { type: 'step', field: 'departureStart', delta: -7 }, '− 7 d');
-  addButton('departure-start-plus', 575, CONTROL_ROWS.departure, 156, 76,
-    { type: 'step', field: 'departureStart', delta: 7 }, '+ 7 d');
-  addButton('departure-end-minus', 865, CONTROL_ROWS.departure, 156, 76,
-    { type: 'step', field: 'departureEnd', delta: -7 }, '− 7 d');
-  addButton('departure-end-plus', 1295, CONTROL_ROWS.departure, 156, 76,
-    { type: 'step', field: 'departureEnd', delta: 7 }, '+ 7 d');
-
-  addButton('tof-min-minus', 145, CONTROL_ROWS.tof, 156, 76,
-    { type: 'step', field: 'tofMinDays', delta: -10 }, '− 10 d');
-  addButton('tof-min-plus', 575, CONTROL_ROWS.tof, 156, 76,
-    { type: 'step', field: 'tofMinDays', delta: 10 }, '+ 10 d');
-  addButton('tof-max-minus', 865, CONTROL_ROWS.tof, 156, 76,
-    { type: 'step', field: 'tofMaxDays', delta: -10 }, '− 10 d');
-  addButton('tof-max-plus', 1295, CONTROL_ROWS.tof, 156, 76,
-    { type: 'step', field: 'tofMaxDays', delta: 10 }, '+ 10 d');
-
-  addButton('resolution-minus', 86, CONTROL_ROWS.resolution, 126, 76,
-    { type: 'step', field: 'resolution', delta: -10 }, '− 10');
-  addButton('resolution-plus', 405, CONTROL_ROWS.resolution, 126, 76,
-    { type: 'step', field: 'resolution', delta: 10 }, '+ 10');
-  for (const [index, type] of ['none', 'cost', 'c3'].entries()) {
-    addButton(`budget-${type}`, 735 + index * 235, CONTROL_ROWS.resolution, 208, 76,
-      { type: 'budgetType', value: type }, type === 'none' ? 'None' : type === 'cost' ? 'Cost proxy' : 'C3');
+  for (const [index, [section, label]] of Object.entries(CONTROL_SECTIONS).entries()) {
+    addButton(`tab-${section}`, 265 + index * 455, CONTROL_ROWS.tabs, 418, 96,
+      { type: 'openSection', section }, label);
   }
 
-  addButton('budget-minus', 130, CONTROL_ROWS.budget, 164, 76,
-    () => ({ type: 'budgetStep', delta: budgetStep(-1) }), '− STEP');
-  addButton('budget-plus', 795, CONTROL_ROWS.budget, 164, 76,
-    () => ({ type: 'budgetStep', delta: budgetStep(1) }), '+ STEP');
-  addButton('compute', 1160, CONTROL_ROWS.budget, 420, 84,
-    { type: 'compute' }, 'Compute grid');
+  const mission = { section: 'mission' };
+  for (const [index, target] of ['Venus', 'Mars', 'Jupiter'].entries()) {
+    addButton(`target-${target.toLowerCase()}`, 265 + index * 455, CONTROL_ROWS.destination, 408, 110,
+      { type: 'target', target }, target, mission);
+  }
+  for (const [index, [type, label]] of [['none', 'None'], ['cost', 'Cost proxy'], ['c3', 'Departure C3']].entries()) {
+    addButton(`budget-${type}`, 265 + index * 455, CONTROL_ROWS.budgetType, 408, 104,
+      { type: 'budgetType', value: type }, label, mission);
+  }
+  addButton('budget-minus', 160, CONTROL_ROWS.budgetLimit, 183, 96,
+    () => ({ type: 'budgetStep', delta: budgetStep(-1) }), '−', mission);
+  addButton('budget-plus', 766, CONTROL_ROWS.budgetLimit, 183, 96,
+    () => ({ type: 'budgetStep', delta: budgetStep(1) }), '+', mission);
+  addButton('snap', 1137, CONTROL_ROWS.budgetLimit, 414, 96, { type: 'snap' }, 'Best transfer', mission);
 
-  addButton('snap', 140, CONTROL_ROWS.actions, 210, 86, { type: 'snap' }, 'Snap to min');
-  addButton('play', 380, CONTROL_ROWS.actions, 210, 86, { type: 'play' }, 'Play');
-  addButton('scale', 620, CONTROL_ROWS.actions, 210, 86, { type: 'scale' }, 'Larger model');
-  addButton('radii', 860, CONTROL_ROWS.actions, 210, 86, { type: 'radii' }, 'Physical radii');
-  addButton('reset', 1100, CONTROL_ROWS.actions, 180, 86, { type: 'reset' }, 'Reset scale');
-  addButton('exit', 1320, CONTROL_ROWS.actions, 180, 86, { type: 'exit' }, 'Exit VR');
-  addButton('defaults', 1135, 48, 500, 68, { type: 'defaults' }, 'Reset mission inputs');
+  const search = { section: 'search' };
+  const searchSteps = [
+    ['departure-start', 'departureStart', CONTROL_ROWS.departure, 0, 7, ' d'],
+    ['departure-end', 'departureEnd', CONTROL_ROWS.departure, 720, 7, ' d'],
+    ['tof-min', 'tofMinDays', CONTROL_ROWS.flight, 0, 10, ' d'],
+    ['tof-max', 'tofMaxDays', CONTROL_ROWS.flight, 720, 10, ' d'],
+  ];
+  for (const [id, field, y, offset, step, unit] of searchSteps) {
+    addButton(`${id}-minus`, 145 + offset, y, 170, 90,
+      { type: 'step', field, delta: -step }, `− ${step}${unit}`, search);
+    addButton(`${id}-plus`, 575 + offset, y, 170, 90,
+      { type: 'step', field, delta: step }, `+ ${step}${unit}`, search);
+  }
+  addButton('resolution-minus', 145, CONTROL_ROWS.samples, 170, 90,
+    { type: 'step', field: 'resolution', delta: -10 }, '− 10', search);
+  addButton('resolution-plus', 575, CONTROL_ROWS.samples, 170, 90,
+    { type: 'step', field: 'resolution', delta: 10 }, '+ 10', search);
 
-  const timeCanvas = XR_RESULTS_CANVAS;
-  const timePanel = XR_LAYOUT.results;
-  const timeWidthPx = 1060;
-  const timeHeightPx = 78;
+  const display = { section: 'display' };
+  addButton('scale', 365, CONTROL_ROWS.display, 614, 104, { type: 'scale' }, 'Larger model', display);
+  addButton('radii', 1075, CONTROL_ROWS.display, 614, 104, { type: 'radii' }, 'Radii enlarged', display);
+  addButton('reset', 365, CONTROL_ROWS.reset, 614, 104, { type: 'reset' }, 'Reset display', display);
+  addButton('defaults', 1075, CONTROL_ROWS.reset, 614, 104, { type: 'defaults' }, 'Restore Mars defaults', display);
+
+  addButton('compute', 407, CONTROL_ROWS.footer, 684, 108, { type: 'compute' }, 'Compute grid');
+  addButton('recenter', 939, CONTROL_ROWS.footer, 322, 108, { type: 'recenter' }, 'Recenter');
+  addButton('exit', 1253, CONTROL_ROWS.footer, 244, 108, { type: 'exit' }, 'Exit VR');
+  addButton('play', 166, 112, 235, 130, { type: 'play' }, 'Play', { playback: true });
+
+  const timeCanvas = XR_PLAYBACK_CANVAS;
+  const timePanel = XR_LAYOUT.playback;
+  const timelineWidth = XR_TIMELINE.right - XR_TIMELINE.left;
+  const timelineInset = XR_TIMELINE.inset;
   const timeBar = new THREE.Mesh(
     new THREE.PlaneGeometry(
-      (timeWidthPx / timeCanvas.width) * timePanel.width,
-      (timeHeightPx / timeCanvas.height) * timePanel.height,
+      timelineWidth / timeCanvas.width * timePanel.width,
+      XR_TIMELINE.height / timeCanvas.height * timePanel.height,
     ),
-    new THREE.MeshBasicMaterial({
-      transparent: true,
-      opacity: 0,
-      colorWrite: false,
-      depthWrite: false,
-      side: THREE.FrontSide,
-    }),
+    new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }),
   );
-  const timeUv = panelLocalPointFromUV(0.5, 1 - 491 / timeCanvas.height, timePanel.width, timePanel.height);
-  timeBar.name = 'XR mission progress timebar hit target';
+  const timeUv = panelLocalPointFromUV(
+    (XR_TIMELINE.left + timelineWidth / 2) / timeCanvas.width,
+    1 - XR_TIMELINE.y / timeCanvas.height, timePanel.width, timePanel.height,
+  );
+  timeBar.name = 'Mission timeline hit target';
   timeBar.position.set(timeUv.x, timeUv.y, 0.006);
   timeBar.userData.kind = 'time';
   timeBar.userData.disabled = true;
   timeBar.layers.set(31);
-  resultsRoot.add(timeBar);
+  playbackRoot.add(timeBar);
   interactiveObjects.push(timeBar);
 
   const originalTransforms = new Map();
@@ -401,17 +390,18 @@ export function createXRWorkbench({
   let currentAssetStatus = null;
   let currentProfile = null;
   let hoveredActionId = null;
+  let activeSection = 'mission';
   let previousHoverKey = '';
   let controlSignature = null;
-  let plotSignature = null;
   let lastPlotGrid = null;
   let lastPlotTarget = null;
   let lastPlotMin = null;
   let lastPlotMax = null;
-  let resultStaticSignature = null;
-  let resultDynamicSignature = null;
-  let lastDynamicPaintMs = -Infinity;
-  let pendingDynamicResult = false;
+  let lastPlotComputing = false;
+  let resultSignature = null;
+  let playbackSignature = null;
+  let lastPreviewPaintMs = -Infinity;
+  let previewDirty = false;
   let largerModel = false;
   let exaggeratedRadii = true;
   let previousControlsEnabled = true;
@@ -461,15 +451,15 @@ export function createXRWorkbench({
     const target = grid?.config?.target ?? currentTarget();
     const range = plotRange();
     const chart = XR_PLOT_CANVAS.chart;
-    context.fillStyle = PALETTE.paper;
-    context.fillRect(0, 0, width, height);
-    drawRoundedRect(context, 4, 4, width - 8, height - 8, 22, PALETTE.white, PALETTE.border);
-    drawFittedText(context, `Earth → ${target} transfer costs`, 54, 66, width - 108,
-      { fontSize: 48, minFontSize: 36, weight: 650, color: PALETTE.ink });
+    drawPanel(context, width, height);
+    drawFittedText(context, `Earth → ${target}`, 54, 61, 790,
+      { fontSize: 64, minFontSize: 46, weight: 680, color: PALETTE.ink });
+    drawFittedText(context, 'Transfer cost map', width - 52, 64, 490,
+      { fontSize: 39, weight: 550, color: PALETTE.accent, align: 'right' });
 
-    context.fillStyle = '#fbfcfd';
+    context.fillStyle = PALETTE.space;
     context.fillRect(chart.x, chart.y, chart.width, chart.height);
-    context.strokeStyle = PALETTE.steel;
+    context.strokeStyle = PALETTE.secondary;
     context.lineWidth = 2;
     context.strokeRect(chart.x, chart.y, chart.width, chart.height);
 
@@ -477,15 +467,13 @@ export function createXRWorkbench({
     const tofDays = grid?.tofDays;
     const xTicks = [0, 0.5, 1];
     const yTicks = [0, 0.5, 1];
-    context.strokeStyle = '#dce3ea';
-    context.lineWidth = 1.5;
     for (const t of xTicks) {
       const x = chart.x + chart.width * t;
-      canvasLine(context, x, chart.y, x, chart.y + chart.height, '#e4e9ee', 1.5);
+      canvasLine(context, x, chart.y, x, chart.y + chart.height, PALETTE.surface, 1.5);
     }
     for (const t of yTicks) {
       const y = chart.y + chart.height * t;
-      canvasLine(context, chart.x, y, chart.x + chart.width, y, '#e4e9ee', 1.5);
+      canvasLine(context, chart.x, y, chart.x + chart.width, y, PALETTE.surface, 1.5);
     }
     const dates = departureEpochs?.length
       ? [departureEpochs[0], (departureEpochs[0] + departureEpochs[departureEpochs.length - 1]) / 2, departureEpochs[departureEpochs.length - 1]]
@@ -494,7 +482,7 @@ export function createXRWorkbench({
       ? [tofDays[0], (tofDays[0] + tofDays[tofDays.length - 1]) / 2, tofDays[tofDays.length - 1]]
       : [];
     canvasFont(context, 32, 500);
-    context.fillStyle = PALETTE.steel;
+    context.fillStyle = PALETTE.secondary;
     context.textAlign = 'center';
     for (let index = 0; index < 3; index += 1) {
       const x = chart.x + (chart.width * index) / 2;
@@ -513,28 +501,25 @@ export function createXRWorkbench({
       { fontSize: 32, minFontSize: 27, weight: 600, color: PALETTE.ink, align: 'center' });
     context.restore();
 
-    const gradientX = 250;
-    const gradientY = 930;
-    const gradientWidth = 820;
+    const gradientX = 432;
+    const gradientY = 940;
+    const gradientWidth = 670;
     const gradient = context.createLinearGradient(gradientX, 0, gradientX + gradientWidth, 0);
     for (const stop of PORKCHOP_COLOUR_STOPS) gradient.addColorStop(stop.at, stop.color);
-    drawFittedText(context, 'Cost proxy · km/s', gradientX, gradientY - 28, gradientWidth,
-      { fontSize: 32, minFontSize: 27, weight: 600, color: PALETTE.ink, align: 'center' });
+    drawFittedText(context, 'Cost proxy (km/s)', 54, gradientY, 220,
+      { fontSize: 31, minFontSize: 25, weight: 600, color: PALETTE.ink });
     context.fillStyle = gradient;
     context.fillRect(gradientX, gradientY - 12, gradientWidth, 24);
-    context.strokeStyle = PALETTE.steel;
-    context.strokeRect(gradientX, gradientY - 12, gradientWidth, 24);
-    drawFittedText(context, range ? formatNumber(range.min) : '—', gradientX - 14, gradientY + 30, 220,
-      { fontSize: 28, minFontSize: 22, weight: 500, color: PALETTE.ink, align: 'left' });
-    drawFittedText(context, range ? formatNumber(range.max) : '—', gradientX + gradientWidth + 14, gradientY + 30, 330,
-      { fontSize: 28, minFontSize: 22, weight: 500, color: PALETTE.ink, align: 'left' });
-    drawFittedText(context, 'Nearest sampled cells · colors above the legend ceiling are clamped', width / 2, 986, width - 80,
-      { fontSize: 23, minFontSize: 20, weight: 500, color: PALETTE.steel, align: 'center' });
+    drawFittedText(context, range ? formatNumber(range.min) : '—', gradientX - 17, gradientY, 90,
+      { fontSize: 29, color: PALETTE.secondary, align: 'right' });
+    drawFittedText(context, range ? `${formatNumber(range.max)}+` : '—', gradientX + gradientWidth + 17, gradientY, 210,
+      { fontSize: 29, color: PALETTE.secondary });
 
     if (!grid) {
-      drawFittedText(context, 'No grid · tune mission controls, then Compute grid.',
+      const message = currentSnapshot?.computing ? 'Computing transfer grid…' : 'Compute a grid to see transfer opportunities';
+      drawFittedText(context, message,
         chart.x + chart.width / 2, chart.y + chart.height / 2, chart.width - 60,
-        { fontSize: 38, minFontSize: 29, weight: 550, color: PALETTE.steel, align: 'center' });
+        { fontSize: 42, minFontSize: 32, weight: 550, color: PALETTE.secondary, align: 'center' });
     }
   }
 
@@ -543,7 +528,7 @@ export function createXRWorkbench({
     if (!selection || typeof selection !== 'object') return null;
     if (!selection.departure && !selection.arrival) return null;
     return {
-      departureArrival: `Departure ${selection.departure ?? '—'}   ·   Arrival ${selection.arrival ?? '—'}`,
+      departureArrival: `Depart ${displayEpoch(selection.departure)}  ·  Arrive ${displayEpoch(selection.arrival)}`,
       costs: `TOF ${selection.tof ?? '—'}   ·   Proxy ${selection.cost ?? '—'}   ·   C3 ${selection.c3 ?? '—'}`,
       state: `v∞ depart ${selection.vInfDeparture ?? '—'}   ·   arrive ${selection.vInfArrival ?? '—'}   ·   ${selection.branch ?? '—'}`,
       feasibility: selection.feasibility ?? selection.status ?? '—',
@@ -553,8 +538,7 @@ export function createXRWorkbench({
   function assetText() {
     const asset = getAssetStatus();
     if (!asset) return 'Body imagery: local assets loading or neutral surfaces.';
-    const label = asset.label ?? asset.assetId ?? 'Body imagery';
-    return `${label}: ${asset.message ?? asset.status ?? 'status unavailable'}`;
+    return asset.message ?? asset.label ?? 'Body imagery status unavailable.';
   }
 
   function scaleDisclosure() {
@@ -563,84 +547,113 @@ export function createXRWorkbench({
     const targetNote = modelTarget().toLowerCase() === currentTarget().toLowerCase()
       ? ''
       : ` · model ${modelTarget()} until Compute`;
-    return `${scale.fit ? 'Jupiter fit' : 'Tabletop'} · ${scale.metresPerAu.toFixed(3)} m/AU · ${radiusText}${targetNote}`;
+    return `${scale.fit ? 'Jupiter fit' : 'Display scale'} · ${scale.metresPerAu.toFixed(3)} m/AU · ${radiusText}${targetNote}`;
+  }
+
+  function drawPropellantReadout(context, width, propellant) {
+    const estimate = propellant?.estimate;
+    drawRoundedRect(context, 30, 283, width - 60, 115, 10, PALETTE.surface);
+    if (!estimate) {
+      drawFittedText(context, propellant?.status || 'Propellant estimate unavailable.', 49, 337, width - 98,
+        { fontSize: 33, minFontSize: 27, color: PALETTE.error });
+      return;
+    }
+
+    const rounded = (value) => value.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    const price = estimate.propellantCostUsd;
+    drawFittedText(context, `Est. propellant ${rounded(estimate.propellantKg)} kg`, 49, 311, 780,
+      { fontSize: 42, minFontSize: 30, weight: 700, color: PALETTE.accent });
+    if (Number.isFinite(price)) {
+      drawFittedText(context, `Est. cost $${rounded(price)}`, width - 49, 311, 515,
+        { fontSize: 40, minFontSize: 28, weight: 680, color: PALETTE.ink, align: 'right' });
+    }
+    drawFittedText(context,
+      `Circular orbits · ${rounded(estimate.departureAltitudeKm)} km Earth → ${rounded(estimate.captureAltitudeKm)} km ${estimate.target} · Δv ${formatNumber(estimate.totalDeltaVKmPerSec, 2)} km/s`,
+      49, 345, width - 98, { fontSize: 31, minFontSize: 25, color: PALETTE.secondary });
+    const priceNote = propellant.status || (price === null ? 'Price unset' : `$${formatNumber(estimate.pricePerKgUsd, 2)}/kg assumed`);
+    drawFittedText(context,
+      `${rounded(estimate.dryMassKg)} kg dry · Isp ${formatNumber(estimate.specificImpulseSeconds, 1)} s · ${priceNote}`,
+      49, 375, width - 98, { fontSize: 29, minFontSize: 24, color: PALETTE.secondary });
   }
 
   function drawResultsPanel(context, width, height) {
     const snapshot = currentSnapshot ?? {};
     const lines = selectedLines(snapshot);
-    const grid = plot.getGrid();
-    const status = snapshot.computing
-      ? 'Computing grid in worker…'
-      : (cleanStatus(snapshot.status) || (snapshot.hasGrid ? 'Grid ready.' : 'No current grid.'));
-    const hover = typeof snapshot.hoverSummary === 'string' ? snapshot.hoverSummary : '';
-    const minimum = minimumLines(snapshot.minimumSummary, Boolean(snapshot.hasGrid ?? grid));
-    const progress = Number.isFinite(snapshot.progress) ? Math.min(100, Math.max(0, snapshot.progress)) : 0;
-    const missionDate = snapshot.missionDate ?? '—';
-    const isPlaying = Boolean(snapshot.playing);
-    const instructions = profileInstructions(currentProfile);
+    const minimum = minimumLines(snapshot.minimumSummary, Boolean(snapshot.hasGrid));
+    if (snapshot.hasGrid && snapshot.budgetValid && budgetInput().type === 'none') {
+      minimum[0] = minimum[0].replace(/^Unrestricted: /, 'Grid minimum · ');
+      minimum.length = 1;
+    }
+    const status = cleanStatus(snapshot.status) || 'Preparing mission planner…';
+    const isPreview = previousHoverKey.startsWith('plot:');
+    const detail = isPreview ? snapshot.hoverSummary : status;
     const telemetry = telemetryLine(snapshot.telemetry);
-    context.fillStyle = PALETTE.paper;
-    context.fillRect(0, 0, width, height);
-    drawRoundedRect(context, 4, 4, width - 8, height - 8, 20, PALETTE.white, PALETTE.border);
-    drawFittedText(context, 'Selected transfer', 40, 31, 400,
-      { fontSize: 34, minFontSize: 28, weight: 700, color: PALETTE.blue });
+    const asset = getAssetStatus();
+    drawPanel(context, width, height);
+
+    drawFittedText(context, 'Selected transfer', 42, 43, 600,
+      { fontSize: 42, weight: 700, color: PALETTE.ink });
     if (lines) {
-      drawFittedText(context, lines.departureArrival, 40, 100, width - 80,
-        { fontSize: 42, minFontSize: 28, weight: 560 });
-      drawFittedText(context, lines.costs, 40, 158, width - 80,
-        { fontSize: 42, minFontSize: 27, weight: 560 });
-      drawFittedText(context, lines.state, 40, 216, width - 80,
-        { fontSize: 40, minFontSize: 26, weight: 520 });
-      drawFittedText(context, `Feasibility · ${lines.feasibility}`, 40, 274, width - 80,
-        { fontSize: 39, minFontSize: 25, weight: 560,
+      drawFittedText(context, lines.departureArrival, 42, 103, width - 84,
+        { fontSize: 41, minFontSize: 31, color: PALETTE.ink });
+      drawFittedText(context, lines.costs, 42, 158, width - 84,
+        { fontSize: 43, minFontSize: 32, weight: 650, color: PALETTE.ink });
+      drawFittedText(context, lines.state, 42, 213, width - 84,
+        { fontSize: 37, minFontSize: 30, color: PALETTE.secondary });
+      drawFittedText(context, lines.feasibility, 42, 261, width - 84,
+        { fontSize: 35, minFontSize: 30, weight: 630,
           color: /infeasible|invalid|failed/i.test(lines.feasibility) ? PALETTE.error : PALETTE.success });
+      drawPropellantReadout(context, width, snapshot.propellant);
     } else {
-      const message = snapshot.selection?.status || 'No transfer selected · select a valid plot cell or Snap to minimum.';
-      drawFittedText(context, message, 40, 158, width - 80,
-        { fontSize: 40, minFontSize: 28, weight: 560,
-          color: /failed|invalid|no finite/i.test(message) ? PALETTE.error : PALETTE.steel });
+      const message = snapshot.selection?.status || 'Choose a plot cell to inspect its transfer.';
+      drawFittedText(context, message, 42, 130, width - 84,
+        { fontSize: 40, minFontSize: 30, color: PALETTE.secondary });
     }
-    drawFittedText(context, minimum[0], 40, 326, width - 80,
-      { fontSize: 35, minFontSize: 24, weight: 550, color: PALETTE.ink });
-    if (minimum[1]) {
-      drawFittedText(context, minimum[1], 40, 362, width - 80,
-        { fontSize: 34, minFontSize: 23, weight: 520, color: PALETTE.steel });
+
+    canvasLine(context, 42, 412, width - 42, 412);
+    for (const [index, line] of minimum.entries()) {
+      drawFittedText(context, line, 42, 438 + index * 36, width - 84,
+        { fontSize: 35, minFontSize: 29, color: PALETTE.secondary });
     }
-    drawFittedText(context, hover ? `Plot hover · ${hover}` : `Status · ${status}`, 40, 407, width - 80,
-      { fontSize: 37, minFontSize: 24, weight: 500,
-        color: /error|failed|invalid/i.test(status) ? PALETTE.error : PALETTE.steel });
-    drawFittedText(context,
-      `Mission time · ${displayEpoch(missionDate)}   ·   ${progress.toFixed(0)}%   ·   ${isPlaying ? 'Playing' : 'Paused'}`,
-      40, 455, width - 80,
-      { fontSize: 39, minFontSize: 25, weight: 600, color: PALETTE.ink });
+    drawRoundedRect(context, 30, 496, width - 60, 51, 10, PALETTE.surface);
+    drawFittedText(context, isPreview ? `Preview · ${detail}` : detail, 49, 521, width - 98,
+      { fontSize: 35, minFontSize: 30, color: /error|failed|invalid/i.test(detail) ? PALETTE.error : PALETTE.accent });
+    drawFittedText(context, `${profileInstructions(currentProfile)}${telemetry ? `  ·  ${telemetry}` : ''}`,
+      42, 570, width - 84, { fontSize: 31, minFontSize: 26, color: PALETTE.secondary });
+    drawFittedText(context, `Sun-only patched conic, 0 revolutions  ·  ${scaleDisclosure()}`,
+      42, 609, width - 84, { fontSize: 31, minFontSize: 27, color: PALETTE.secondary });
+    if (asset?.status === 'error' || asset?.status === 'loading') {
+      drawFittedText(context, assetText(), 42, 636, width - 84,
+        { fontSize: 26, color: asset.status === 'error' ? PALETTE.error : PALETTE.secondary });
+    }
+  }
 
-    const barLeft = 190;
-    const barWidth = 1060;
-    const barY = 491;
-    const barHeight = 22;
-    drawRoundedRect(context, barLeft, barY - barHeight / 2, barWidth, barHeight, 11, '#dce4ec');
-    drawRoundedRect(context, barLeft, barY - barHeight / 2, barWidth * progress / 100, barHeight, 11, PALETTE.blue);
-    context.fillStyle = PALETTE.steel;
-    canvasFont(context, 30, 650);
-    context.textAlign = 'center';
-    context.fillText('0%', 132, barY);
-    context.fillText('100%', 1308, barY);
-
-    drawFittedText(context, `Controller · ${instructions}`, 40, 542, width - 80,
-      { fontSize: 36, minFontSize: 23, weight: 500, color: PALETTE.ink });
-    drawFittedText(context,
-      `Sun-only · patched-conic · zero revolutions · ${scaleDisclosure()}`,
-      40, 586, width - 80,
-      { fontSize: 34, minFontSize: 22, weight: 520, color: PALETTE.steel });
-    drawFittedText(context, `${status}${telemetry ? ` · ${telemetry}` : ''}`,
-      40, 630, width - 80,
-      { fontSize: 30, minFontSize: 20, weight: 520,
-        color: /error|failed/i.test(status) ? PALETTE.error : PALETTE.steel });
-    drawFittedText(context, `Local assets · ${assetText()}`,
-      40, 674, width - 80,
-      { fontSize: 30, minFontSize: 20, weight: 520,
-        color: getAssetStatus()?.status === 'error' ? PALETTE.error : PALETTE.steel });
+  function drawPlaybackPanel(context, width, height) {
+    const snapshot = currentSnapshot ?? {};
+    const { left, right, y } = XR_TIMELINE;
+    const trackLeft = left + timelineInset;
+    const trackRight = right - timelineInset;
+    const progress = snapshot.progress ?? 0;
+    const x = trackLeft + (trackRight - trackLeft) * progress / 100;
+    const enabled = Boolean(snapshot.canPlay);
+    drawPanel(context, width, height, PALETTE.surface);
+    drawButton(context, buttonSpecsById.get('play'), snapshot);
+    canvasLine(context, 294, 38, 294, height - 38);
+    drawFittedText(context, enabled ? displayEpoch(snapshot.missionDate) : 'Select a transfer to enable playback',
+      left, 55, right - left - 160, { fontSize: 38, minFontSize: 30, color: PALETTE.ink });
+    if (enabled) {
+      drawFittedText(context, `${Math.round(progress)}%`, right, 55, 150,
+        { fontSize: 37, weight: 680, color: PALETTE.accent, align: 'right' });
+    }
+    drawRoundedRect(context, trackLeft, y - 11, trackRight - trackLeft, 22, 11, PALETTE.border);
+    if (!enabled) return;
+    if (x > trackLeft) drawRoundedRect(context, trackLeft, y - 11, x - trackLeft, 22, 11, PALETTE.accent);
+    context.fillStyle = PALETTE.accent;
+    context.beginPath();
+    context.arc(x, y, 21, 0, Math.PI * 2);
+    context.fill();
+    drawFittedText(context, 'Hold trigger to scrub', (left + right) / 2, 185, right - left,
+      { fontSize: 30, color: PALETTE.secondary, align: 'center' });
   }
 
   function inputsAreValid(snapshot) {
@@ -658,7 +671,8 @@ export function createXRWorkbench({
     return false;
   }
 
-  function actionSelected(spec, snapshot) {
+  function actionSelected(spec) {
+    if (spec.action.type === 'openSection') return spec.action.section === activeSection;
     if (spec.id.startsWith('target-')) {
       return currentTarget().toLowerCase() === spec.id.slice('target-'.length);
     }
@@ -671,97 +685,115 @@ export function createXRWorkbench({
   }
 
   function actionLabel(spec, snapshot) {
-    const inputs = snapshot.inputs ?? {};
     const budget = budgetInput();
-    if (spec.id === 'departure-start-minus') return '− 7 d';
-    if (spec.id === 'departure-start-plus') return '+ 7 d';
-    if (spec.id === 'departure-end-minus') return '− 7 d';
-    if (spec.id === 'departure-end-plus') return '+ 7 d';
-    if (spec.id === 'tof-min-minus' || spec.id === 'tof-max-minus') return '− 10 d';
-    if (spec.id === 'tof-min-plus' || spec.id === 'tof-max-plus') return '+ 10 d';
-    if (spec.id === 'resolution-minus') return '− 10';
-    if (spec.id === 'resolution-plus') return '+ 10';
     if (spec.id === 'compute') return snapshot.computing ? 'Computing…' : 'Compute grid';
     if (spec.id === 'budget-minus') return `− ${budget.type === 'c3' ? '5' : '0.5'}`;
     if (spec.id === 'budget-plus') return `+ ${budget.type === 'c3' ? '5' : '0.5'}`;
-    if (spec.id === 'snap') return 'Snap to min';
     if (spec.id === 'play') return snapshot.playing ? 'Pause' : 'Play';
-    if (spec.id === 'scale') return largerModel ? 'Larger model · on' : 'Larger model';
-    if (spec.id === 'radii') return exaggeratedRadii ? 'Exaggerated radii' : 'Physical radii';
+    if (spec.id === 'radii') return exaggeratedRadii ? 'Radii enlarged' : 'Physical radii';
     return spec.label;
   }
 
   function drawButton(context, spec, snapshot) {
     const { x, y, width, height } = spec;
     const disabled = actionDisabled(spec, snapshot);
-    const selected = actionSelected(spec, snapshot);
+    const selected = actionSelected(spec);
     const hovered = hoveredActionId === spec.id;
-    const fill = disabled
-      ? PALETTE.disabled
-      : hovered
-        ? '#dce9f7'
-        : selected
-          ? '#e7f0fa'
-          : PALETTE.white;
-    const stroke = disabled ? '#d1d8df' : (selected || hovered ? PALETTE.blue : PALETTE.border);
-    drawRoundedRect(context, x - width / 2, y - height / 2, width, height, 18, fill, stroke);
+    const primary = spec.id === 'compute' || spec.id === 'play';
+    const fill = disabled ? PALETTE.disabled : (hovered ? PALETTE.hover : (primary ? PALETTE.accent : PALETTE.surface));
+    const stroke = !disabled && (selected || hovered) ? PALETTE.accent : PALETTE.border;
+    drawRoundedRect(context, x - width / 2, y - height / 2, width, height, 13, fill, stroke);
     const label = actionLabel(spec, snapshot);
+    const color = disabled ? PALETTE.secondary : (primary && !hovered ? PALETTE.space : PALETTE.ink);
     drawFittedText(context, label, x, y, width - 20,
-      { fontSize: 40, minFontSize: 25, weight: selected ? 680 : 560,
-        color: disabled ? '#9aa5af' : PALETTE.ink, align: 'center' });
+      { fontSize: 40, minFontSize: 28, weight: selected || primary ? 700 : 580, color, align: 'center' });
+    if (selected && !disabled) canvasLine(context, x - width / 4, y + height / 2 - 11,
+      x + width / 4, y + height / 2 - 11, PALETTE.accent, 4);
     spec.mesh.userData.disabled = disabled;
+  }
+
+  function drawMissionSection(context, snapshot) {
+    drawFittedText(context, 'Destination from Earth', 58, 230, 1000,
+      { fontSize: 40, weight: 620, color: PALETTE.ink });
+    const { tofMinDays, tofMaxDays } = snapshot.inputs ?? {};
+    if (tofMinDays && tofMaxDays) {
+      drawFittedText(context, `${tofMinDays}–${tofMaxDays} days of flight`, 1380, 230, 660,
+        { fontSize: 34, color: PALETTE.secondary, align: 'right' });
+    }
+    drawFittedText(context, 'Budget filter', 58, 423, 420,
+      { fontSize: 40, weight: 620, color: PALETTE.ink });
+    drawFittedText(context, 'Dims cells above your limit', 1380, 423, 790,
+      { fontSize: 34, color: PALETTE.secondary, align: 'right' });
+    const budget = budgetInput();
+    const unit = budget.type === 'c3' ? 'km²/s²' : 'km/s';
+    let limitLabel = 'No limit';
+    if (snapshot.budgetValid === false) limitLabel = 'Choose a budget type';
+    else if (budget.type !== 'none') limitLabel = `${budget.limit} ${unit}`;
+    drawFittedText(context, limitLabel, 463, CONTROL_ROWS.budgetLimit, 360,
+      { fontSize: 40, minFontSize: 28, weight: 650, color: PALETTE.ink, align: 'center' });
+
+    let guide = 'Choose a destination and compute a grid.';
+    if (snapshot.hasGrid) guide = 'Aim at the chart to preview a transfer.';
+    if (snapshot.hasGrid && !snapshot.canSnap && budget.type !== 'none') {
+      guide = 'Adjust the budget to find a feasible transfer.';
+    }
+    drawFittedText(context, guide, 58, 762, 1324, { fontSize: 33, color: PALETTE.secondary });
+  }
+
+  function drawSearchSection(context, inputs) {
+    const fields = [
+      ['First departure (UTC)', inputs.departureStart, 360, CONTROL_ROWS.departure],
+      ['Last departure (UTC)', inputs.departureEnd, 1080, CONTROL_ROWS.departure],
+      ['Shortest flight (days)', inputs.tofMinDays, 360, CONTROL_ROWS.flight],
+      ['Longest flight (days)', inputs.tofMaxDays, 1080, CONTROL_ROWS.flight],
+      ['Samples per axis', inputs.resolution, 360, CONTROL_ROWS.samples],
+    ];
+    for (const [label, value, x, y] of fields) {
+      drawFittedText(context, label, x, y - 75, 540,
+        { fontSize: 36, weight: 620, color: PALETTE.secondary, align: 'center' });
+      drawFittedText(context, value || '—', x, y, 236,
+        { fontSize: 40, minFontSize: 28, weight: 680, color: PALETTE.ink, align: 'center' });
+    }
+    drawFittedText(context, 'More samples give a finer map', 765, CONTROL_ROWS.samples, 614,
+      { fontSize: 33, color: PALETTE.secondary });
+  }
+
+  function drawDisplaySection(context) {
+    drawFittedText(context, 'Planet display', 58, 230, 1000,
+      { fontSize: 40, weight: 620, color: PALETTE.ink });
+    const descriptions = [
+      ['Zooms the orrery', 365, 399],
+      ['Switches between visible and true radii', 1075, 399],
+      ['Restores model scale and radii', 365, 617],
+      ['Restores search settings and clears the budget', 1075, 617],
+    ];
+    for (const [label, x, y] of descriptions) {
+      drawFittedText(context, label, x, y, 614, { fontSize: 32, color: PALETTE.secondary, align: 'center' });
+    }
+    drawFittedText(context, 'Recenter brings the workbench to your current view.', 58, 736, 1324,
+      { fontSize: 33, color: PALETTE.secondary });
   }
 
   function drawControlsPanel(context, width, height) {
     const snapshot = currentSnapshot ?? {};
-    const inputs = snapshot.inputs ?? {};
-    context.fillStyle = PALETTE.paper;
-    context.fillRect(0, 0, width, height);
-    drawRoundedRect(context, 4, 4, width - 8, height - 8, 20, PALETTE.white, PALETTE.border);
-    drawFittedText(context, 'Mission tuning', 42, 46, 550,
-      { fontSize: 43, minFontSize: 34, weight: 700, color: PALETTE.blue });
-    drawFittedText(context, 'Range changes require a new grid', width / 2, 98, width - 80,
-      { fontSize: 25, minFontSize: 22, weight: 500, color: PALETTE.steel, align: 'center' });
+    drawPanel(context, width, height);
+    drawFittedText(context, 'Mission controls', 58, 52, 900,
+      { fontSize: 46, weight: 700, color: PALETTE.ink });
 
-    for (const [index, spec] of buttonSpecs.entries()) {
-      if (index < 3) drawButton(context, spec, snapshot);
+    if (activeSection === 'mission') drawMissionSection(context, snapshot);
+    else if (activeSection === 'search') drawSearchSection(context, snapshot.inputs ?? {});
+    else drawDisplaySection(context);
+    for (const spec of buttonSpecs) {
+      if (spec.playback) continue;
+      const visible = !spec.section || spec.section === activeSection;
+      if (visible) drawButton(context, spec, snapshot);
+      else spec.mesh.userData.disabled = true;
     }
-    canvasFont(context, 31, 700);
-    context.fillStyle = PALETTE.steel;
-    context.textAlign = 'center';
-    context.fillText(`Departure start · ${inputs.departureStart ?? '—'}`, 360, CONTROL_ROWS.departure - 58);
-    context.fillText(`Departure end · ${inputs.departureEnd ?? '—'}`, 1080, CONTROL_ROWS.departure - 58);
-    context.fillText(`TOF min · ${inputs.tofMinDays ?? '—'} d`, 360, CONTROL_ROWS.tof - 58);
-    context.fillText(`TOF max · ${inputs.tofMaxDays ?? '—'} d`, 1080, CONTROL_ROWS.tof - 58);
-    canvasLine(context, 50, 340, width - 50, 340, '#e4e9ee');
-    canvasLine(context, 50, 465, width - 50, 465, '#e4e9ee');
 
-    drawFittedText(context, `Grid ${inputs.resolution ?? '—'} × ${inputs.resolution ?? '—'}`,
-      245, CONTROL_ROWS.resolution - 60, 184,
-      { fontSize: 27, minFontSize: 21, weight: 620, color: PALETTE.ink, align: 'center' });
-    drawFittedText(context, 'Budget type', 970, CONTROL_ROWS.resolution - 60, 500,
-      { fontSize: 30, minFontSize: 23, weight: 700, color: PALETTE.steel, align: 'center' });
-
-    const budget = budgetInput();
-    const limit = budget.limit ?? '0';
-    const unit = budget.type === 'c3' ? 'km²/s²' : 'km/s';
-    const limitText = budget.type === 'none' ? 'No threshold' : `${limit} ${unit}`;
-    drawFittedText(context, `Threshold · ${limitText}`, 470, CONTROL_ROWS.budget - 60, 510,
-      { fontSize: 34, minFontSize: 24, weight: 620, color: PALETTE.ink, align: 'center' });
-
-    for (let index = 3; index < buttonSpecs.length; index += 1) {
-      drawButton(context, buttonSpecs[index], snapshot);
-    }
     const validInputs = inputsAreValid(snapshot);
-    const rangeMessage = !validInputs
-      ? 'Mission ranges are invalid · correct target/date/flight-time/resolution before computing.'
-      : snapshot.computing
-        ? 'Worker is computing the selected grid…'
-        : cleanStatus(snapshot.status);
-    const rangeColor = !validInputs || /error|invalid|failed/i.test(rangeMessage) ? PALETTE.error : PALETTE.steel;
-    drawFittedText(context, rangeMessage || 'Ray-pick a field to adjust; Compute starts the sampled search.',
-      width / 2, 918, width - 80,
-      { fontSize: 31, minFontSize: 21, weight: 500, color: rangeColor, align: 'center' });
+    const status = validInputs ? cleanStatus(snapshot.status) : 'Check the dates, flight duration, and samples in Search.';
+    drawFittedText(context, status, 58, 925, width - 116,
+      { fontSize: 32, minFontSize: 27, color: !validInputs || /failed|error/i.test(status) ? PALETTE.error : PALETTE.secondary });
   }
 
   function updatePlotTransform() {
@@ -790,19 +822,21 @@ export function createXRWorkbench({
     const target = currentTarget();
     const min = range?.min ?? null;
     const max = range?.max ?? null;
-    if (grid === lastPlotGrid && target === lastPlotTarget && min === lastPlotMin && max === lastPlotMax) return;
+    const computing = Boolean(currentSnapshot?.computing);
+    if (grid === lastPlotGrid && target === lastPlotTarget && min === lastPlotMin
+      && max === lastPlotMax && computing === lastPlotComputing) return;
     lastPlotGrid = grid;
     lastPlotTarget = target;
     lastPlotMin = min;
     lastPlotMax = max;
-    plotSignature = `${target}:${min ?? ''}:${max ?? ''}`;
+    lastPlotComputing = computing;
     plotPanel.repaint(drawPlotPanel);
   }
 
-  function paintControlsIfChanged(force = false) {
+  function paintControlsIfChanged() {
     const snapshot = currentSnapshot ?? {};
-    syncOrreryScale();
     const signature = JSON.stringify({
+      activeSection,
       inputs: snapshot.inputs,
       budgetInput: snapshot.budgetInput,
       budgetValid: snapshot.budgetValid,
@@ -810,80 +844,65 @@ export function createXRWorkbench({
       status: snapshot.status,
       hasGrid: snapshot.hasGrid,
       canSnap: snapshot.canSnap,
-      canPlay: snapshot.canPlay,
-      playing: snapshot.playing,
       modelScaleExaggerated: largerModel,
       scaleExaggerated: exaggeratedRadii,
-      hoveredActionId,
+      hoveredActionId: hoveredActionId === 'play' ? null : hoveredActionId,
     });
-    if (!force && signature === controlSignature) return;
+    if (signature === controlSignature) return;
     controlSignature = signature;
     controlsPanel.repaint(drawControlsPanel);
   }
 
-  function paintResults(force = false) {
+  function paintResults(nowMs = performance.now()) {
     resultsPanel.repaint(drawResultsPanel);
-    const canPlay = Boolean(currentSnapshot?.canPlay);
+    lastPreviewPaintMs = nowMs;
+    previewDirty = false;
+  }
+
+  function paintPlaybackIfChanged() {
+    const { canPlay, missionDate, progress, playing } = currentSnapshot;
+    const signature = JSON.stringify([canPlay, missionDate, progress, playing, hoveredActionId === 'play']);
+    if (signature === playbackSignature) return;
+    playbackSignature = signature;
     timeBar.userData.disabled = !canPlay;
-    lastDynamicPaintMs = performance.now();
-    pendingDynamicResult = false;
-    if (force) resultStaticSignature = JSON.stringify({
-      selection: currentSnapshot?.selection,
-      minimumSummary: currentSnapshot?.minimumSummary,
-      status: currentSnapshot?.status,
-      assetStatus: getAssetStatus(),
-      scaleExaggerated: currentSnapshot?.scaleExaggerated,
-      modelScaleExaggerated: currentSnapshot?.modelScaleExaggerated,
-    });
+    playbackPanel.repaint(drawPlaybackPanel);
   }
 
   function syncState(snapshot, nowMs = performance.now()) {
-    currentSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : {};
-    largerModel = getSnapshotScaleFlag(currentSnapshot, largerModel);
-    exaggeratedRadii = getRadiusFlag(currentSnapshot, exaggeratedRadii);
+    const previousPreview = currentSnapshot?.hoverSummary;
+    currentSnapshot = snapshot ?? {};
+    if (!immersive) return;
     syncOrreryScale();
     paintPlotIfChanged();
     paintControlsIfChanged();
+    paintPlaybackIfChanged();
 
-    const staticState = {
+    const signature = JSON.stringify({
       selection: currentSnapshot.selection,
+      propellant: currentSnapshot.propellant,
       minimumSummary: currentSnapshot.minimumSummary,
+      budgetType: budgetInput().type,
+      budgetValid: currentSnapshot.budgetValid,
       status: currentSnapshot.status,
-      computing: currentSnapshot.computing,
       hasGrid: currentSnapshot.hasGrid,
-      canPlay: currentSnapshot.canPlay,
       assetStatus: getAssetStatus(),
       modelScaleExaggerated: largerModel,
       scaleExaggerated: exaggeratedRadii,
+      target: currentTarget(),
+      modelTarget: modelTarget(),
       profile: currentProfile,
-    };
-    const nextStaticSignature = JSON.stringify(staticState);
-    const dynamicState = {
-      hoverSummary: currentSnapshot.hoverSummary,
-      missionDate: currentSnapshot.missionDate,
-      progress: currentSnapshot.progress,
-      playing: currentSnapshot.playing,
-      canPlay: currentSnapshot.canPlay,
       telemetry: currentSnapshot.telemetry,
-    };
-    const nextDynamicSignature = JSON.stringify(dynamicState);
-    if (nextStaticSignature !== resultStaticSignature) {
-      resultStaticSignature = nextStaticSignature;
-      resultDynamicSignature = nextDynamicSignature;
-      paintResults();
-      return;
-    }
-    if (nextDynamicSignature !== resultDynamicSignature) {
-      resultDynamicSignature = nextDynamicSignature;
-      if (nowMs - lastDynamicPaintMs >= 250) paintResults();
-      else pendingDynamicResult = true;
+    });
+    if (signature !== resultSignature) {
+      resultSignature = signature;
+      paintResults(nowMs);
+    } else if (previousPreview !== currentSnapshot.hoverSummary) {
+      previewDirty = true;
     }
   }
 
   function setAssetStatus(assetStatus) {
-    currentAssetStatus = assetStatus && typeof assetStatus === 'object' ? assetStatus : null;
-    controlSignature = null;
-    resultStaticSignature = null;
+    currentAssetStatus = assetStatus ?? null;
     syncState(currentSnapshot);
   }
 
@@ -907,14 +926,22 @@ export function createXRWorkbench({
     originalTransforms.delete(object);
   }
 
-  function setImmersive(active) {
+  function requestCentering() {
+    needsCentering = true;
+  }
+
+  function setImmersive(active, spaceType) {
     const nextActive = Boolean(active);
     if (disposed || immersive === nextActive) return;
     immersive = nextActive;
     if (immersive) {
-      const enabledFeatures = renderer.xr.getSession?.()?.enabledFeatures;
-      referenceSpace = enabledFeatures?.includes?.('local-floor') ? 'local-floor' : 'local';
-      layoutRoot.position.y = referenceSpace === 'local' ? -1.6 : 0;
+      activeSection = 'mission';
+      referenceSpace = spaceType ?? 'local';
+      sessionSpace = renderer.xr.getReferenceSpace?.();
+      sessionSpace?.addEventListener?.('reset', requestCentering);
+      layoutRoot.position.set(0, referenceSpace === 'local' ? -XR_LAYOUT.eyeHeight : 0, 0);
+      layoutRoot.rotation.y = 0;
+      requestCentering();
       rememberTransform(orrery.contentGroup);
       rememberTransform(plot.mesh);
       previousControlsEnabled = orrery.controls.enabled;
@@ -922,11 +949,15 @@ export function createXRWorkbench({
       orrery.contentGroup.position.set(...XR_LAYOUT.orrery.center);
       plotRoot.add(plot.mesh);
       updatePlotTransform();
-      syncOrreryScale();
+      syncState(currentSnapshot);
       orrery.setControlsEnabled(false);
+      orrery.setImmersiveStyle(true);
       xrScene.updateMatrixWorld(true);
       controllers.setActive(true);
     } else {
+      sessionSpace?.removeEventListener?.('reset', requestCentering);
+      sessionSpace = null;
+      needsCentering = false;
       controllers.setActive(false);
       const originalWorldScale = originalTransforms.get(orrery.contentGroup)?.scale.x;
       restoreTransform(plot.mesh);
@@ -935,6 +966,7 @@ export function createXRWorkbench({
         orrery.setWorldScale(originalWorldScale);
       }
       orrery.setControlsEnabled(previousControlsEnabled);
+      orrery.setImmersiveStyle(false);
     }
   }
 
@@ -958,10 +990,13 @@ export function createXRWorkbench({
     hoveredActionId = nextActionId;
     if (hit?.kind === 'plot') plot.setHover(nextCell);
     else if (wasPlot) plot.setHover(null);
-    if (wasPlot || hit?.kind === 'plot') onHover?.(nextCell ? { i: nextCell.i, j: nextCell.j } : null);
-    if (hoverChanged) {
-      controlSignature = null;
+    if (wasPlot || hit?.kind === 'plot') {
+      previewDirty = true;
+      onHover?.(nextCell);
+    }
+    if (hoverChanged && immersive) {
       paintControlsIfChanged();
+      paintPlaybackIfChanged();
     }
   }
 
@@ -972,6 +1007,7 @@ export function createXRWorkbench({
     raycaster.intersectObjects(interactiveObjects, false, reusableHits);
     for (const intersection of reusableHits) {
       const object = intersection.object;
+      if (object.userData.xrPanel) return null;
       if (object.userData.disabled) continue;
       hitRecord.object = object;
       hitRecord.point.copy(intersection.point);
@@ -1002,7 +1038,7 @@ export function createXRWorkbench({
         return hitRecord;
       }
       if (object.userData.kind === 'time') {
-        const progress = progressFromUV(hitRecord.uv.x);
+        const progress = progressFromUV((hitRecord.uv.x * timelineWidth - timelineInset) / (timelineWidth - 2 * timelineInset));
         if (progress === null) continue;
         hitRecord.kind = 'time';
         hitRecord.i = undefined;
@@ -1018,12 +1054,15 @@ export function createXRWorkbench({
   function activateHit(hit) {
     if (!hit || disposed) return;
     if (hit.kind === 'plot') {
-      plot.setSelection({ i: hit.i, j: hit.j });
       onSelect?.({ i: hit.i, j: hit.j });
       return;
     }
     if (hit.kind === 'action' && hit.action) {
-      onXRAction?.(hit.action);
+      if (hit.action.type === 'openSection') {
+        activeSection = hit.action.section;
+        paintControlsIfChanged();
+      } else if (hit.action.type === 'recenter') requestCentering();
+      else onXRAction?.(hit.action);
       return;
     }
     if (hit.kind === 'time' && Number.isFinite(hit.progress)) {
@@ -1037,19 +1076,33 @@ export function createXRWorkbench({
     hitTest,
     onHover: compareHover,
     onActivate: activateHit,
+    onDrag: activateHit,
     onScrub: (delta) => onXRAction?.({ type: 'scrubDelta', delta }),
     onShortcut: (shortcut) => onXRAction?.({ type: shortcut === 'nextTarget' ? 'nextTarget' : 'snap' }),
     onProfile: (profile) => {
       currentProfile = profile && typeof profile === 'object' ? profile : null;
-      resultStaticSignature = null;
       syncState(currentSnapshot);
     },
   });
 
   function updateXR(deltaSeconds, nowMs = performance.now()) {
-    if (disposed) return;
+    if (disposed || !immersive) return;
+    if (needsCentering && sessionSpace) {
+      const visibility = renderer.xr.getSession?.()?.visibilityState;
+      const frame = renderer.xr.getFrame?.();
+      const transform = (!visibility || visibility === 'visible')
+        ? frame?.getViewerPose(sessionSpace)?.transform : null;
+      if (transform) {
+        const { position, orientation } = transform;
+        layoutRoot.position.set(position.x, position.y - XR_LAYOUT.eyeHeight, position.z);
+        sky.stars.position.set(position.x, position.y, position.z);
+        layoutRoot.rotation.y = viewerHeading(orientation, layoutRoot.rotation.y);
+        layoutRoot.updateMatrixWorld(true);
+        needsCentering = false;
+      }
+    }
     controllers.update(nowMs, deltaSeconds);
-    if (pendingDynamicResult && nowMs - lastDynamicPaintMs >= 250) paintResults();
+    if (previewDirty && nowMs - lastPreviewPaintMs >= 120) paintResults(nowMs);
   }
 
   function setState(snapshot, nowMs = performance.now()) {
@@ -1073,11 +1126,12 @@ export function createXRWorkbench({
   }
 
   function diagnostics() {
-    const scale = getModelScale(currentTarget(), largerModel);
+    const scale = getModelScale(modelTarget(), largerModel);
     const controls = buttonSpecs.map((spec) => {
       spec.mesh.updateWorldMatrix(true, false);
       return {
         id: spec.id,
+        disabled: spec.mesh.userData.disabled,
         action: typeof spec.action === 'function' ? spec.action() : spec.action,
         center: pointToArray(spec.mesh.getWorldPosition(new THREE.Vector3())),
         normal: worldNormal(spec.mesh),
@@ -1088,6 +1142,13 @@ export function createXRWorkbench({
       immersive,
       sessionActive: Boolean(renderer.xr.isPresenting),
       referenceSpace,
+      activeSection,
+      layoutPosition: pointToArray(layoutRoot.position),
+      layoutHeading: layoutRoot.rotation.y,
+      timeline: {
+        center: pointToArray(timeBar.getWorldPosition(new THREE.Vector3())),
+        enabled: !timeBar.userData.disabled,
+      },
       metresPerAu: scale.metresPerAu,
       jupiterFit: scale.fit,
       largerModel,
@@ -1101,9 +1162,6 @@ export function createXRWorkbench({
     };
   }
 
-  // Render once immediately. Main may deliver the first metadata snapshot
-  // after synchronous asset notifications from the orrery constructor.
-  syncState(null);
   controllers.setActive(false);
 
   return {
@@ -1122,8 +1180,10 @@ export function createXRWorkbench({
       disposed = true;
       controllers.setActive(false);
       controllers.destroy();
+      sky.dispose();
       plotPanel.dispose();
       resultsPanel.dispose();
+      playbackPanel.dispose();
       controlsPanel.dispose();
       for (const spec of buttonSpecs) {
         spec.mesh.removeFromParent();
@@ -1132,10 +1192,6 @@ export function createXRWorkbench({
       }
       timeBar.geometry.dispose();
       timeBar.material.dispose();
-      table.geometry.dispose();
-      table.material.dispose();
-      rim.geometry.dispose();
-      rim.material.dispose();
       xrScene.remove(layoutRoot, xrRig, fillLight, ambientLight);
       xrRig.clear();
       layoutRoot.clear();

@@ -491,6 +491,11 @@ export function createOrrery({
     setMissionTime,
     setBodyScale,
     setWorldScale,
+    setImmersiveStyle(immersive) {
+      orbitMaterials[0].opacity = immersive ? 0.74 : 0.5;
+      orbitMaterials[1].opacity = immersive ? 0.73 : 0.58;
+      trajectory.setImmersiveStyle(immersive);
+    },
     getWorldScale: () => contentGroup.scale.x,
     getTarget: () => currentTarget,
     resetView,

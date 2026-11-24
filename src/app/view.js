@@ -1,3 +1,5 @@
+import { DEFAULT_PROPELLANT_SETTINGS } from '../physics/propellant.js';
+
 const FIELD_IDS = Object.freeze({
   target: 'target',
   departureStart: 'departure-start',
@@ -21,6 +23,7 @@ export function createAppView({
   onCompute,
   onMissionInput,
   onBudgetChange,
+  onPropellantChange,
   onTimeScrub,
   onTogglePlayback,
   onResetView,
@@ -31,6 +34,9 @@ export function createAppView({
   const budgetType = element('budget-type');
   const budgetLimit = element('budget-limit');
   const formError = element('form-errors');
+  const propellantSettings = element('propellant-settings');
+  const propellantInputs = Array.from(propellantSettings.querySelectorAll('input'));
+  for (const input of propellantInputs) input.value = String(DEFAULT_PROPELLANT_SETTINGS[input.name]);
   const inputFields = Object.fromEntries(
     Object.entries(FIELD_IDS).map(([key, id]) => [key, element(id)]),
   );
@@ -76,6 +82,7 @@ export function createAppView({
     onMissionInput?.('target', readInputValues());
   };
   const handleBudgetInput = () => onBudgetChange?.(budgetType.value, budgetLimit.value);
+  const handlePropellantInput = () => onPropellantChange?.();
   const handleTimeScrub = () => onTimeScrub?.(Number(element('time-progress').value));
   const handlePlayback = () => onTogglePlayback?.();
   const handleReset = () => onResetView?.();
@@ -88,6 +95,7 @@ export function createAppView({
   budgetType.addEventListener('change', handleBudgetInput);
   budgetLimit.addEventListener('input', handleBudgetInput);
   budgetLimit.addEventListener('change', handleBudgetInput);
+  propellantSettings.addEventListener('input', handlePropellantInput);
   element('time-progress').addEventListener('input', handleTimeScrub);
   element('play-toggle').addEventListener('click', handlePlayback);
   element('reset-view').addEventListener('click', handleReset);
@@ -118,6 +126,8 @@ export function createAppView({
       formError.textContent = message ?? Object.values(errors ?? {})[0] ?? '';
       formError.hidden = !formError.textContent;
       const invalidInput = Object.values(inputFields).find((input) => !input.validity.valid);
+      const searchOptions = invalidInput?.closest('details');
+      if (searchOptions) searchOptions.open = true;
       invalidInput?.focus();
       invalidInput?.reportValidity();
     },
@@ -153,6 +163,7 @@ export function createAppView({
       if (typeof limit === 'string' && budgetLimit.value !== limit) budgetLimit.value = limit;
       element('budget-unit').textContent = unit;
       budgetLimit.disabled = !enabled;
+      element('budget-limit-field').hidden = !enabled;
       budgetLimit.setCustomValidity(message);
       setText('budget-error', message);
       element('budget-error').hidden = !message;
@@ -241,6 +252,31 @@ export function createAppView({
       setText('selection-status', result?.status ?? 'Select a valid plot cell.');
     },
 
+    readPropellantInputs() {
+      return Object.fromEntries(propellantInputs.map((input) => [input.name, input.value]));
+    },
+
+    setPropellantEstimate({ estimate, status }) {
+      const velocity = (value) => Number.isFinite(value) ? `${value.toFixed(3)} km/s` : '—';
+      const format = (value, decimals = 1) => value.toLocaleString('en-US', { maximumFractionDigits: decimals });
+      setText('propellant-mass', estimate ? `${format(estimate.propellantKg)} kg` : '—');
+      setText('propellant-cost', Number.isFinite(estimate?.propellantCostUsd)
+        ? estimate.propellantCostUsd.toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+        : '—');
+      setText('propellant-total-dv', velocity(estimate?.totalDeltaVKmPerSec));
+      setText('propellant-departure-dv', velocity(estimate?.departureDeltaVKmPerSec));
+      setText('propellant-capture-dv', velocity(estimate?.captureDeltaVKmPerSec));
+      const orbits = estimate
+        ? `${format(estimate.departureAltitudeKm, 0)} km Earth orbit → ${format(estimate.captureAltitudeKm, 0)} km ${estimate.target} orbit, both circular.`
+        : '';
+      const inputs = estimate
+        ? `${format(estimate.dryMassKg)} kg dry mass, ${format(estimate.specificImpulseSeconds)} s Isp`
+        : '';
+      const price = estimate?.pricePerKgUsd != null ? `, $${format(estimate.pricePerKgUsd, 2)}/kg assumed` : '';
+      setText('propellant-orbits', estimate ? `${orbits} ${inputs}${price}.` : '');
+      setText('propellant-status', status);
+    },
+
     setMissionTime(epochMs, formattedDate, progress, playing) {
       setText('mission-date', Number.isFinite(epochMs) ? formattedDate : '—');
       const slider = element('time-progress');
@@ -312,6 +348,7 @@ export function createAppView({
       budgetType.removeEventListener('change', handleBudgetInput);
       budgetLimit.removeEventListener('input', handleBudgetInput);
       budgetLimit.removeEventListener('change', handleBudgetInput);
+      propellantSettings.removeEventListener('input', handlePropellantInput);
       element('time-progress').removeEventListener('input', handleTimeScrub);
       element('play-toggle').removeEventListener('click', handlePlayback);
       element('reset-view').removeEventListener('click', handleReset);

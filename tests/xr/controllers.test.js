@@ -65,11 +65,12 @@ describe('createXRControllers', () => {
     expect(xrControllers.getDiagnostics().sources).toEqual([]);
   });
 
-  it('prefers the right hover ray and falls back to the left after disconnect', () => {
+  it('shows both reticles and uses the left hover when the right ray misses', () => {
     const { renderer, controllers } = fakeRenderer();
     const rig = new THREE.Group();
     const hoverKinds = [];
     const hits = [];
+    let rightMisses = false;
     const xrControllers = createXRControllers({
       renderer,
       rig,
@@ -78,6 +79,7 @@ describe('createXRControllers', () => {
           direction: raycaster.ray.direction.clone(),
           originX: raycaster.ray.origin.x,
         });
+        if (rightMisses && raycaster.ray.origin.x > 0) return null;
         return {
           object: raycaster.ray.direction,
           point: pointOneMeterAlongRay(raycaster),
@@ -100,17 +102,24 @@ describe('createXRControllers', () => {
     controllers[1].dispatchEvent({ type: 'connected', data: rightSource });
 
     xrControllers.update(10_000, 1 / 90);
-    expect(hits).toHaveLength(1);
+    expect(hits).toHaveLength(2);
     expect(hits[0].originX).toBeCloseTo(0.2);
     expect(hits[0].direction.z).toBeCloseTo(-1);
     expect(controllers[1].children.find((child) => child.name === 'xr-controller-ray').visible).toBe(true);
     expect(controllers[1].children.find((child) => child.name === 'xr-controller-reticle').visible).toBe(true);
 
-    controllers[1].dispatchEvent({ type: 'disconnected', data: rightSource });
-    expect(hoverKinds.at(-1)).toBeNull();
+    expect(controllers[0].getObjectByName('xr-controller-reticle').visible).toBe(true);
+    expect(xrControllers.getDiagnostics().hoveredHit.pointerIndex).toBe(1);
+
+    rightMisses = true;
     xrControllers.update(10_020, 1 / 90);
-    expect(hits).toHaveLength(2);
-    expect(hits[1].originX).toBeCloseTo(-0.2);
+    expect(hits).toHaveLength(4);
+    expect(hits[3].originX).toBeCloseTo(-0.2);
+    expect(xrControllers.getDiagnostics().hoveredHit.pointerIndex).toBe(0);
+    expect(controllers[1].getObjectByName('xr-controller-reticle').visible).toBe(false);
+
+    controllers[0].dispatchEvent({ type: 'disconnected', data: leftSource });
+    expect(hoverKinds.at(-1)).toBeNull();
 
     xrControllers.destroy();
   });
@@ -183,6 +192,48 @@ describe('createXRControllers', () => {
     expect(onActivate.mock.calls[0][0]).toMatchObject({ kind: 'action', action: 'compute' });
 
     xrControllers.destroy();
+  });
+
+  it('drags only the captured timeline and cancels on release or tracking loss', () => {
+    const { renderer, controllers } = fakeRenderer();
+    const timeline = new THREE.Object3D();
+    const pause = new THREE.Object3D();
+    const onActivate = vi.fn();
+    const onDrag = vi.fn();
+    let current = { object: timeline, kind: 'time', progress: 20 };
+    const controls = createXRControllers({
+      renderer,
+      rig: new THREE.Group(),
+      hitTest: (raycaster) => ({ ...current, point: pointOneMeterAlongRay(raycaster) }),
+      onActivate,
+      onDrag,
+    });
+    const controller = controllers[0];
+    controller.visible = true;
+    controller.dispatchEvent({ type: 'connected', data: source('left') });
+    controller.dispatchEvent({ type: 'selectstart' });
+    expect(onActivate).toHaveBeenCalledWith(expect.objectContaining({ progress: 20 }));
+
+    current = { object: timeline, kind: 'time', progress: 55 };
+    controls.update(100, 1 / 90);
+    expect(onDrag).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ progress: 55 }));
+    controls.update(110, 1 / 90);
+    current = { object: pause, kind: 'action', action: 'pause' };
+    controls.update(120, 1 / 90);
+    controller.dispatchEvent({ type: 'selectend' });
+    current = { object: timeline, kind: 'time', progress: 85 };
+    controls.update(130, 1 / 90);
+    expect(onDrag).toHaveBeenCalledTimes(1);
+    expect(onActivate).toHaveBeenCalledTimes(1);
+
+    controller.dispatchEvent({ type: 'selectstart' });
+    controller.visible = false;
+    controls.update(140, 1 / 90);
+    controller.visible = true;
+    current = { object: timeline, kind: 'time', progress: 100 };
+    controls.update(150, 1 / 90);
+    expect(onDrag).toHaveBeenCalledTimes(1);
+    controls.destroy();
   });
 
   it('does not keep hover/input active outside immersive mode and re-baselines held buttons', () => {

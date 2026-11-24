@@ -2,6 +2,7 @@ import './styles.css';
 import GUI from 'lil-gui';
 import { createAppView } from './app/view.js';
 import {
+  BUDGET_DEFAULT_LIMITS,
   DEFAULT_MISSION_INPUTS,
   TARGET_TOF_PRESETS,
   formatUTCInstant,
@@ -17,6 +18,7 @@ import {
 } from './physics/porkchop.js';
 import { propagateState, sampleTrajectory } from './physics/propagate.js';
 import { computeTransfer } from './physics/transfer.js';
+import { estimatePropellant } from './physics/propellant.js';
 import { createPlannerScene } from './scene/plannerScene.js';
 import { createPerformanceMonitor } from './utils/perf.js';
 import { createVREntry } from './xr/entry.js';
@@ -64,6 +66,7 @@ let selectedCell = null;
 let selectedTransfer = null;
 let selectedSamples = null;
 let selectedOutput = null;
+let propellantReadout = null;
 let selectionStatus = 'Select a valid plot cell.';
 let selectedProgress = 0;
 let playing = false;
@@ -103,8 +106,11 @@ function publishXRState({ force = false, playback = false } = {}) {
     hasGrid: Boolean(grid),
     computing,
     selection: selectedOutput ? { ...selectedOutput } : { status: selectionStatus },
+    propellant: propellantReadout,
     hoverSummary,
-    missionDate,
+    missionDate: selectedTransfer
+      ? formatUTCInstant(selectedTransfer.departureMs + selectedTransfer.tofSeconds * 1000 * selectedProgress / 100)
+      : missionDate,
     progress: selectedTransfer ? selectedProgress : null,
     playing,
     canSnap: Boolean(
@@ -181,10 +187,35 @@ function minimumSummary() {
   return `${unconstrained} Feasible: ${formatMinimum(feasibleMinimum)}.`;
 }
 
+function updatePropellantEstimate() {
+  const input = view.readPropellantInputs();
+  const dryMassKg = Number(input.dryMassKg);
+  const specificImpulseSeconds = Number(input.specificImpulseSeconds);
+  const pricePerKgUsd = input.pricePerKgUsd === '' ? null : Number(input.pricePerKgUsd);
+  const priceInvalid = pricePerKgUsd !== null && (!Number.isFinite(pricePerKgUsd) || pricePerKgUsd < 0);
+
+  const estimate = estimatePropellant(selectedTransfer, {
+    dryMassKg,
+    specificImpulseSeconds,
+    pricePerKgUsd: priceInvalid ? null : pricePerKgUsd,
+  });
+  let status = '';
+  if (!Number.isFinite(dryMassKg) || dryMassKg <= 0) status = 'Enter a dry mass greater than zero.';
+  else if (!Number.isFinite(specificImpulseSeconds) || specificImpulseSeconds <= 0) status = 'Enter a specific impulse greater than zero.';
+  else if (!selectedTransfer) status = 'Select a valid transfer to see its propellant estimate.';
+  else if (!estimate) status = 'This propellant estimate is outside the supported range.';
+  else if (priceInvalid) status = 'Enter a propellant price of zero or more.';
+  else if (pricePerKgUsd !== null && estimate.propellantCostUsd === null) status = 'The propellant cost is outside the supported range.';
+
+  propellantReadout = { estimate, status };
+  view.setPropellantEstimate(propellantReadout);
+}
+
 function setSelection(result = null) {
   selectionStatus = result?.status ?? 'Select a valid plot cell.';
   selectedOutput = result && ('departure' in result || 'arrival' in result) ? { ...result } : null;
   view.setSelection(result);
+  updatePropellantEstimate();
 }
 
 function applyMinimums() {
@@ -585,7 +616,6 @@ function applyXRAction(action) {
         scaleExaggerated = true;
         displayOptions.exaggeratedBodies = true;
         planner?.setBodyScale(true);
-        planner?.resetView();
         document.getElementById('body-scale-note').textContent = 'Planet radii exaggerated for visibility';
         break;
       case 'defaults':
@@ -639,7 +669,10 @@ function updateFrame(timestamp) {
   if (playing && selectedTransfer) {
     playbackTick = true;
     if (lastFrameTime === null) lastFrameTime = now;
-    const elapsed = Math.max(0, now - lastFrameTime);
+    const visibility = planner.renderer.xr.getSession?.()?.visibilityState;
+    const elapsed = mode === 'XR'
+      ? (visibility && visibility !== 'visible' ? 0 : Math.min(100, Math.max(0, now - lastFrameTime)))
+      : Math.max(0, now - lastFrameTime);
     lastFrameTime = now;
     selectedProgress += elapsed / PLAYBACK_DURATION_MS * 100;
     if (selectedProgress >= 100) {
@@ -775,7 +808,16 @@ function onXRHover(indices) {
 view = createAppView({
   onCompute: (values) => computeGrid(values),
   onMissionInput: (name, values) => handleMissionInput(name, values),
-  onBudgetChange: (type, limit) => handleBudgetChange(type, limit),
+  onBudgetChange: (type, limit) => {
+    const nextLimit = type !== budgetInput.type && Object.hasOwn(BUDGET_DEFAULT_LIMITS, type)
+      ? BUDGET_DEFAULT_LIMITS[type]
+      : limit;
+    handleBudgetChange(type, nextLimit);
+  },
+  onPropellantChange: () => {
+    updatePropellantEstimate();
+    publishXRState();
+  },
   onTimeScrub: (progress) => scrubMissionTime(progress),
   onTogglePlayback: () => togglePlayback(),
   onResetView: () => planner?.resetView(),
@@ -785,7 +827,7 @@ view = createAppView({
 view.setInputValues(inputs);
 view.setTargetPreset(DEFAULT_MISSION_INPUTS.target, TARGET_TOF_PRESETS[DEFAULT_MISSION_INPUTS.target]);
 view.setBudgetControl('none', 'No unit', false, '', budgetInput.limit);
-view.setSelection();
+setSelection();
 view.setMinimums({ hasGrid: false });
 view.setSnapAvailable(false);
 view.setPlaybackAvailable(false);
@@ -843,14 +885,14 @@ try {
       renderer: planner.renderer,
       host: document.getElementById('vr-entry'),
       onStatus: (message, status) => view.setVREntryStatus(message, status),
-      onSessionState: (active) => {
+      onSessionState: (active, _session, referenceSpaceType) => {
         previousAnimationTimestamp = null;
         lastFrameTime = null;
         stopPlayback();
         if (active) {
           document.body.classList.add('xr-presenting');
           if (displayGui?.domElement) displayGui.domElement.hidden = true;
-          planner?.setImmersive(true);
+          planner?.setImmersive(true, referenceSpaceType);
         } else {
           planner?.setImmersive(false);
           document.body.classList.remove('xr-presenting');
@@ -902,6 +944,7 @@ if (new URLSearchParams(window.location.search).get('debugXR') === '1') {
     gridCounts: grid ? { departures: grid.departureCount, tof: grid.tofCount, valid: grid.validCount, invalid: grid.invalidCount } : null,
     selection: selectedCell ? { i: selectedCell.i, j: selectedCell.j } : null,
     selectedOutput: selectedOutput ? { ...selectedOutput } : null,
+    propellant: propellantReadout,
     selectionStatus,
     minimumSummary: minimumSummary(),
     status: { ...computeStatus },

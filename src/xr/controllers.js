@@ -9,7 +9,7 @@ import {
   stickScrubDelta,
 } from './input.js';
 
-const RAY_LENGTH = 2.5;
+const IDLE_RAY_LENGTH = 1.25;
 const RAY_FAR = 20;
 const PROFILE_BASE_URL = import.meta.env?.BASE_URL ?? '/';
 
@@ -156,6 +156,7 @@ export function createXRControllers({
   hitTest,
   onHover = noop,
   onActivate = noop,
+  onDrag = noop,
   onScrub = noop,
   onShortcut = noop,
   onProfile = noop,
@@ -173,7 +174,6 @@ export function createXRControllers({
 
   let active = true;
   let destroyed = false;
-  let hoveredIndex = null;
   let hoveredSourceIndex = null;
   let hoveredSnapshot = null;
   const records = [];
@@ -216,13 +216,13 @@ export function createXRControllers({
   };
 
   function createRayVisual(controller) {
-    const positions = new Float32Array([0, 0, 0, 0, 0, -RAY_LENGTH]);
+    const positions = new Float32Array([0, 0, 0, 0, 0, -IDLE_RAY_LENGTH]);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const material = new THREE.LineBasicMaterial({
-      color: 0x245da8,
+      color: 0x8be2db,
       transparent: true,
-      opacity: 0.78,
+      opacity: 0.32,
       depthWrite: false,
     });
     const line = new THREE.Line(geometry, material);
@@ -233,7 +233,7 @@ export function createXRControllers({
 
     const reticleGeometry = new THREE.RingGeometry(0.012, 0.019, 24);
     const reticleMaterial = new THREE.MeshBasicMaterial({
-      color: 0xb17c45,
+      color: 0xffd27a,
       side: THREE.DoubleSide,
       transparent: true,
       opacity: 0.95,
@@ -339,7 +339,7 @@ export function createXRControllers({
     const scaleZ = Math.abs(record.controller.getWorldScale(worldScale).z);
     const localDistance = Number.isFinite(distance) && distance > 0
       ? distance / Math.max(scaleZ, 1e-6)
-      : RAY_LENGTH;
+      : IDLE_RAY_LENGTH;
     position.array[5] = -localDistance;
     position.needsUpdate = true;
   }
@@ -383,12 +383,14 @@ export function createXRControllers({
     if (hit && finiteVector3(hit.point)) {
       const distance = raycaster.ray.origin.distanceTo(hit.point);
       setRayDistance(record, distance);
-      reticlePoint.copy(hit.point);
+      record.ray.material.opacity = 0.78;
+      reticlePoint.copy(hit.point).addScaledVector(rayDirection, -0.004);
       record.controller.worldToLocal(reticlePoint);
       record.ray.reticle.position.copy(reticlePoint);
       record.ray.reticle.visible = true;
     } else {
-      setRayDistance(record, RAY_LENGTH);
+      setRayDistance(record, IDLE_RAY_LENGTH);
+      record.ray.material.opacity = 0.32;
       record.ray.reticle.visible = false;
     }
     return hit;
@@ -407,8 +409,7 @@ export function createXRControllers({
   }
 
   function clearHover(forceCallback = false) {
-    const hadHover = hoveredSourceIndex !== null || hoveredIndex !== null || hoveredSnapshot !== null;
-    hoveredIndex = null;
+    const hadHover = hoveredSourceIndex !== null || hoveredSnapshot !== null;
     hoveredSourceIndex = null;
     hoveredSnapshot = null;
     for (const record of records) record.ray.reticle.visible = false;
@@ -416,33 +417,32 @@ export function createXRControllers({
   }
 
   function refreshHover() {
-    const candidates = orderedRecords(true);
-    let selected = null;
-    for (const candidate of candidates) {
-      if (poseIsUsable(candidate)) {
-        selected = candidate;
-        break;
+    let picked = false;
+    for (const record of orderedRecords(true)) {
+      if (!poseIsUsable(record)) {
+        record.dragTarget = null;
+        continue;
+      }
+
+      // Each hand gets an independent ray and reticle. Use one readout when both hit.
+      const hit = raycast(record);
+      if (record.dragTarget?.userData?.disabled) record.dragTarget = null;
+      if (record.dragTarget && hit?.object === record.dragTarget && hit.progress !== record.dragProgress) {
+        record.dragProgress = hit.progress;
+        safeCallback(onDrag, hit);
+      }
+
+      if (!picked && hit) {
+        picked = true;
+        const snapshot = hitSnapshot(hit, record.index);
+        if (!sameHitSnapshot(hoveredSnapshot, snapshot)) {
+          hoveredSourceIndex = record.index;
+          hoveredSnapshot = snapshot;
+          safeCallback(onHover, hit);
+        }
       }
     }
-
-    if (!selected) {
-      clearHover();
-      refreshRayVisibility();
-      return;
-    }
-
-    for (const record of records) {
-      if (record !== selected) record.ray.reticle.visible = false;
-    }
-    const hit = raycast(selected);
-    const snapshot = hitSnapshot(hit, selected.index);
-    if (hoveredSourceIndex !== selected.index || !sameHitSnapshot(hoveredSnapshot, snapshot)) {
-      hoveredIndex = hit ? selected.index : null;
-      hoveredSourceIndex = selected.index;
-      hoveredSnapshot = snapshot;
-      // The borrowed result is passed through synchronously and never stored.
-      safeCallback(onHover, hit);
-    }
+    if (!picked) clearHover();
     refreshRayVisibility();
   }
 
@@ -457,6 +457,7 @@ export function createXRControllers({
     record.source = event?.data ?? null;
     record.mapping = record.source ? mappingFor(record.source) : null;
     record.modelLoaded = false;
+    record.dragTarget = null;
     if (record.model) record.model.visible = false;
     record.proceduralGrip.visible = false;
     baselineShortcut(record);
@@ -469,6 +470,7 @@ export function createXRControllers({
     record.source = null;
     record.mapping = null;
     record.modelLoaded = false;
+    record.dragTarget = null;
     record.shortcutWasPressed = false;
     record.ray.line.visible = false;
     record.ray.reticle.visible = false;
@@ -482,7 +484,12 @@ export function createXRControllers({
     if (!active || destroyed || !poseIsUsable(record)) return;
     // Never use the stored hover: selectstart raycasts with the current XR pose.
     const hit = raycast(record);
-    if (hit) safeCallback(onActivate, hit);
+    if (!hit) return;
+    if (hit.kind === 'time') {
+      record.dragTarget = hit.object;
+      record.dragProgress = hit.progress;
+    }
+    safeCallback(onActivate, hit);
   }
 
   for (let index = 0; index < 2; index += 1) {
@@ -520,20 +527,25 @@ export function createXRControllers({
       source: null,
       mapping: null,
       shortcutWasPressed: false,
+      dragTarget: null,
+      dragProgress: null,
       onConnected: null,
       onDisconnected: null,
       onSelectStart: null,
+      onSelectEnd: null,
       onGripConnected: null,
       onGripDisconnected: null,
     };
     record.onConnected = (event) => handleConnected(record, event);
     record.onDisconnected = (event) => handleDisconnected(record, event);
     record.onSelectStart = () => handleSelectStart(record);
+    record.onSelectEnd = () => { record.dragTarget = null; };
     record.onGripConnected = (event) => modelEvents.dispatchEvent({ type: 'connected', data: event.data });
     record.onGripDisconnected = (event) => modelEvents.dispatchEvent({ type: 'disconnected', data: event.data });
     controller.addEventListener('connected', record.onConnected);
     controller.addEventListener('disconnected', record.onDisconnected);
     controller.addEventListener('selectstart', record.onSelectStart);
+    controller.addEventListener('selectend', record.onSelectEnd);
     grip.addEventListener('connected', record.onGripConnected);
     grip.addEventListener('disconnected', record.onGripDisconnected);
     records.push(record);
@@ -577,6 +589,7 @@ export function createXRControllers({
     for (const record of records) {
       baselineShortcut(record);
       if (!active) {
+        record.dragTarget = null;
         record.ray.line.visible = false;
         record.ray.reticle.visible = false;
         record.proceduralGrip.visible = false;
@@ -636,6 +649,7 @@ export function createXRControllers({
       record.controller.removeEventListener('connected', record.onConnected);
       record.controller.removeEventListener('disconnected', record.onDisconnected);
       record.controller.removeEventListener('selectstart', record.onSelectStart);
+      record.controller.removeEventListener('selectend', record.onSelectEnd);
       record.grip.removeEventListener('connected', record.onGripConnected);
       record.grip.removeEventListener('disconnected', record.onGripDisconnected);
       record.controller.remove(record.ray.line, record.ray.reticle, record.proceduralGrip);

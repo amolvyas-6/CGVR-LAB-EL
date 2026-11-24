@@ -170,6 +170,44 @@ h3 {
   min-width: 0;
 }
 
+.mission-primary {
+  display: grid;
+  grid-template-columns: minmax(9rem, 17rem) auto;
+  justify-content: start;
+  align-items: end;
+  gap: 10px;
+}
+
+.mission-form > .form-note {
+  margin: 8px 0 0;
+}
+
+.search-options {
+  margin-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.search-options > summary {
+  padding: 10px 0;
+  color: #394b62;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.search-options > summary:focus-visible {
+  outline: 2px solid #245da8;
+  outline-offset: 3px;
+}
+
+.search-options > .control-help {
+  margin-bottom: 10px;
+}
+
+.budget-limit-field[hidden] {
+  display: none;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -181,10 +219,6 @@ h3 {
   min-width: 0;
   align-content: start;
   gap: 6px;
-}
-
-.field-wide {
-  grid-column: span 1;
 }
 
 .field label,
@@ -230,13 +264,6 @@ h3 {
 .form-error[hidden],
 .budget-error[hidden] {
   display: none;
-}
-
-.form-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 13px;
 }
 
 .primary-button,
@@ -689,6 +716,26 @@ h3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.propellant-panel {
+  margin-top: 16px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.propellant-panel h4 {
+  margin: 0 0 8px;
+  font-size: 0.83rem;
+}
+
+.propellant-panel .selection-status {
+  margin-top: 4px;
+}
+
+.propellant-panel .search-options {
+  margin-top: 9px;
+}
+
 .telemetry-section {
   padding-bottom: 14px;
 }
@@ -961,13 +1008,8 @@ h3 {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .field-wide {
-    grid-column: auto;
-  }
-
-  .form-actions {
-    align-items: flex-start;
-    flex-direction: column;
+  .mission-primary {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .plot-axis-layout {
@@ -1027,7 +1069,6 @@ h3 {
   }
 }
 
-/* The library-generated VRButton is deliberately restyled as a normal header CTA. */
 .header-actions {
   display: grid;
   flex: 0 0 min(430px, 44%);
@@ -1042,39 +1083,36 @@ h3 {
 }
 
 #vr-entry .vr-entry-button {
-  position: static !important;
-  inset: auto !important;
-  z-index: auto !important;
-  display: inline-flex !important;
-  width: auto !important;
+  display: inline-flex;
+  width: auto;
   min-width: 175px;
   min-height: 46px;
   align-items: center;
   justify-content: center;
-  padding: 0 21px !important;
-  border: 1px solid #245da8 !important;
-  border-radius: 4px !important;
-  background: #245da8 !important;
-  color: #fff !important;
-  cursor: pointer !important;
-  font: inherit !important;
-  font-size: 0.9rem !important;
-  font-weight: 700 !important;
+  padding: 0 21px;
+  border: 1px solid #245da8;
+  border-radius: 4px;
+  background: #245da8;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
   letter-spacing: 0.005em;
-  text-align: center !important;
-  text-decoration: none !important;
-  opacity: 1 !important;
+  text-align: center;
+  text-decoration: none;
+  opacity: 1;
   box-shadow: 0 2px 5px rgb(36 51 72 / 14%);
 }
 
 #vr-entry .vr-entry-button:hover:not(:disabled) {
-  border-color: #1e4f91 !important;
-  background: #1e4f91 !important;
+  border-color: #1e4f91;
+  background: #1e4f91;
 }
 
 #vr-entry .vr-entry-button:disabled {
-  cursor: not-allowed !important;
-  opacity: 0.65 !important;
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .vr-status {
